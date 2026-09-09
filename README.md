@@ -82,6 +82,8 @@ Formatlogik ohne Spieldaten; ein echtes Abbild ist damit **nicht** getestet.
 
 ## Lizenz
 
-GPL-3.0-or-later. Die Laufzeit (ModernGekko, Dolphin-Abstammung) und der Recompiler
-(DolRecomp) stehen unter GPL-3.0; ein Port, der sie einbindet, muss es ebenfalls sein.
-Einzelheiten in [docs/01-MACHBARKEIT.md](docs/01-MACHBARKEIT.md), Abschnitt 4.
+GPL-3.0-or-later, siehe [LICENSE](LICENSE). Die Laufzeit (ModernGekko, mit
+Dolphin-Abstammung unter GPL-2.0-or-later) und der Recompiler (DolRecomp) stehen unter
+GPL-3.0; ein Port, der sie einbindet, muss es ebenfalls sein. Das gilt auch für die
+Dateien unter `patches/`, die Ausschnitte aus diesen Quellen enthalten. Einzelheiten in
+[docs/01-MACHBARKEIT.md](docs/01-MACHBARKEIT.md), Abschnitt 4.
