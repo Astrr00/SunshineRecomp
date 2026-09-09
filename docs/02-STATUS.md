@@ -179,6 +179,38 @@ korrekt weiter.
   Controller oder Tastatur von Hand zu prüfen.
 - **Laden** eines zuvor gespeicherten Fortschritts.
 
+### Auflösung: Ist-Zustand vermessen (Anforderung 2)
+
+Die Skalierung wird über `<user-dir>/config.ini`, Schlüssel `resolution=`,
+gesteuert und in Dolphins ganzzahligen EFB-Faktor (1 bis 12) übersetzt. Drei
+Stufen wurden gefahren und die tatsächliche Bildgröße aus dem PNG-Kopf gemessen:
+
+| `resolution=` | Faktor | tatsächlich gerendert | Bildrate |
+|---|---|---|---|
+| `640x528` | 1 | 640 × 477 | 30,0 FPS |
+| `1920x1080` | 3 | 1920 × 1430 | 30,0 FPS |
+| `3840x2160` | 6 | 3840 × 2859 | 30,0 FPS |
+
+**Was funktioniert:** Die interne Renderauflösung skaliert exakt linear, und
+4K intern läuft auf dieser Hardware ohne Einbruch bei vollen 30 FPS.
+
+**Was fehlt.** Die Anforderung verlangt, interne Render- und Ausgabeauflösung zu
+trennen. Der Ist-Zustand leistet das nicht:
+
+1. **Die Bezeichnungen führen in die Irre.** `1920x1080` erzeugt kein
+   1920 × 1080, sondern 1920 × 1430; `3840x2160` erzeugt 3840 × 2859. Es sind
+   reine Faktor-Etiketten, keine Ausgabeauflösungen. Die Datei sagt das im
+   Kommentar zwar selbst ("Dolphin's internal render target, not the window
+   size"), die Werte behaupten aber etwas anderes.
+2. **Es gibt keine Steuerung der Ausgabeauflösung.** Ausgabe ist schlicht die
+   Fenstergröße; native Displayauflösung, 1080p, 1440p und 4K als *Ausgabe*
+   sind nicht wählbar.
+3. **Kein frei einstellbarer Skalierungsfaktor** jenseits der ganzzahligen
+   EFB-Stufen.
+
+Das Seitenverhältnis liegt durchgehend bei rund 1,34 (4:3). Das ist die
+Ausgangslage, die Anforderung 3 zu ändern hat.
+
 ### Upstream-Defekt: CPU-ABI-Versatz in ModernGekko
 
 Das gebaute Modul wurde von der Laufzeit zunächst abgewiesen:
