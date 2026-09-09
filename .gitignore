@@ -1,0 +1,26 @@
+# Spieldaten des Nutzers duerfen niemals ins Repository gelangen.
+build/
+*.iso
+*.gcm
+*.rvz
+*.wia
+*.ciso
+*.gcz
+*.wbfs
+main.dol
+*.MAP
+import.json
+
+# Vom Recompiler erzeugter Modulcode (host-neutral, aber aus Spieldaten abgeleitet)
+generated/
+*.so
+*.dll
+*.dylib
+
+# Externe Abhaengigkeiten (per Bootstrap geklont, nicht vendoriert)
+ref/
+
+# Werkzeuge
+__pycache__/
+*.pyc
+.venv/

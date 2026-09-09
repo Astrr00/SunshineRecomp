@@ -1,0 +1,283 @@
+# Status und Testergebnisse
+
+Stand: 2026-09-09. Umfang: nativer Windows-x86-64-Port (Android entfallen).
+
+Hier steht nur, was tatsächlich ausgeführt und beobachtet wurde. Was nicht
+überprüft ist, steht unter "Offen" — nicht unter "Erledigt".
+
+## Kurzfassung
+
+**Das Spiel startet und rendert unter Windows.** Der statisch rekompilierte
+Spielcode wird geladen, läuft mit stabilen 30,0 FPS und zeichnet die
+Eröffnungssequenz. Belegt durch Fenstertitel-Messung und einen über das
+Automationsprotokoll aufgenommenen Bildschirmabzug.
+
+**Es ist trotzdem noch kein fertiger Port.** Eingabe, Ton, Speichern und alle
+Modernisierungen (Framerate, Auflösung, Widescreen, HUD) sind unbelegt bis
+unbearbeitet.
+
+## Umgebung
+
+Alles auf einem Rechner verifiziert (Windows 11 Pro 26200, 16 logische Kerne):
+
+| Werkzeug | Version | Herkunft |
+|---|---|---|
+| MSVC `cl.exe` | 19.44.35228 (Toolset 14.44.35207) | bereits installiert |
+| Windows SDK | 10.0.26100.0 | bereits installiert |
+| CMake | 4.4.3 | nachinstalliert (winget, user scope) |
+| LLVM / clang-cl | 20.1.8 | nachinstalliert (offizielles Release nach `ref/llvm`) |
+| Ninja | 1.13.2 | bereits installiert |
+| Python | 3.14.7 | bereits installiert |
+
+## Verifizierte Ergebnisse
+
+### Werkzeugkette (Meilenstein 2)
+
+| Gegenstand | Ergebnis |
+|---|---|
+| DolRecomp, C-Backend, MSVC | gebaut; **ctest 19/19 bestanden** |
+| DolRecomp, LLVM-Backend, clang-cl | gebaut (`dolrecomp.exe`, 42.674.176 Bytes); Testsuite **noch nicht** gelaufen |
+| ModernGekko, MSVC | gebaut, 1888 Ziele; `ModernGekko.exe`, `moderngekko-run.exe`, `moderngekko-port.exe` |
+| ModernGekko, ctest | **49/52 bestanden.** Die 3 Ausfälle (`fullbench`, `fuzzer`, `zstreamtest`) sind Testziele der vendorierten zstd-Bibliothek mit Status "Not Run" — sie werden von diesem Build gar nicht erzeugt. Alle ModernGekko-eigenen Tests sind grün. |
+| `dolphin-tool` (Disc-Werkzeug) | gebaut; hängt nicht am Standardziel und wird separat gebaut |
+
+Reproduzierbar über [../scripts/bootstrap.ps1](../scripts/bootstrap.ps1) und
+[../scripts/build.ps1](../scripts/build.ps1).
+
+### Datenimport (Anforderung 9)
+
+| Gegenstand | Ergebnis |
+|---|---|
+| Eigene Tests | **12/12 bestanden** gegen ein synthetisches GameCube-Abbild |
+| Echte Kopie, Erkennung | `GMSE01`, Revision 0, NTSC-U, "Super Mario Sunshine" |
+| Echte Kopie, Größe | 1.459.978.240 Bytes — wie erwartet |
+| Echte Kopie, SHA-256 | `67cec163…3e51d` — **stimmt überein** |
+| Extraktion | 174 Dateien plus `main.dol` (4.128.928 Bytes) |
+
+Die Prüfsumme war zuvor aus dem SunPad-Projekt übernommen und als ungeprüft
+markiert. Sie ist jetzt an einer echten Kopie bestätigt.
+
+Die Vorlage lag als **RVZ** vor (1.050.830.424 Bytes) und wurde mit dem
+mitgebauten `DolphinTool` nach ISO gewandelt. Der Importer lehnt komprimierte
+Container bewusst mit Hinweis ab, statt sie als defekt zu melden.
+
+### Statische Recompilation (Meilenstein 3, Teil 1)
+
+| Gegenstand | Ergebnis |
+|---|---|
+| Aufruf | `--gamecube --cpu gekko --backend llvm --runtime moderngekko --game-id GMSE01 -j16` |
+| Ergebnis | Exit 0 |
+| Dauer | 1.637,7 s (rund 27 Minuten) |
+| Erzeugt | 16.618 LLVM-Objekt-Chunks, dazu ThinLTO-Zusammenfassungen |
+| Umfang | 4,1 GB |
+| SMC-Warnung | 139 Einträge in `generated_smc.txt`, überwiegend Einzelinstruktionen |
+
+Die SMC-Stellen sind selbstmodifizierender Code, den die Laufzeit über den
+Interpreter abwickelt. 139 Einträge sind wenig; die Leistungswirkung ist noch
+nicht gemessen.
+
+### Modulbau (Meilenstein 3, Teil 2)
+
+Über das dafür vorgesehene Werkzeug `moderngekko-port build`, wie es auch das
+offizielle `ModernGekko-Template` aufruft:
+
+| Gegenstand | Ergebnis |
+|---|---|
+| Aufruf | `build <game-root> --backend c --toolchain clang --output <pfad>` |
+| Ergebnis | Exit 0, 231 Ziele |
+| Dauer | 1.231,6 s (rund 20 Minuten) |
+| Erzeugt | `gGMSE01_recomp.dll`, 98.255.360 Bytes |
+| Zwischenschritt | 224 C-Dateien, 230 MB |
+
+Die 224 C-Dateien decken sich mit der Angabe des Referenzports SunPad für
+GMSE01 ("221 C chunks and about 220 MiB before compilation"). Das bestätigt,
+dass das **C-Backend** der passende Pfad ist.
+
+### Datenimport gegen eine Referenz geprüft
+
+Das Ergebnis des eigenen Importers wurde Byte für Byte mit einer Extraktion
+durch Dolphins `DolphinTool` verglichen: **179 von 179 Dateien identisch**,
+einschließlich `sys/boot.bin`, `bi2.bin`, `apploader.img`, `fst.bin` und
+`main.dol`.
+
+`moderngekko-port inspect` erkennt die importierte Kopie:
+Super Mario Sunshine, `GMSE01`, GameCube (Gekko), Entry `0x8000522c`.
+
+## Offen
+
+### Unmittelbar als Nächstes
+
+- **Eingabe.** Controller- und Tastaturbelegung sind ungeprüft; ohne sie kommt
+  man nicht über die Eröffnungssequenz hinaus.
+- **Ton.** Ob Audio ausgegeben wird, ist nicht überprüft.
+- **Spielstand.** Speichern und Laden sind ungeprüft.
+
+### Noch nicht begonnen
+
+| Anforderung | Stand |
+|---|---|
+| 1 Unbegrenzte Framerate | nicht begonnen; größtes technisches Risiko |
+| 2 Hohe Auflösungen | nicht begonnen |
+| 3 Echtes Widescreen | nicht begonnen; Ausgangspunkt vorhanden (siehe unten) |
+| 4 HUD, Menüs, Zwischensequenzen | nicht begonnen |
+| 5 Windows-Shell | nicht begonnen; ModernGekko liefert `PlatformWin32` |
+| 7 Analoge Schultertaste | nicht begonnen |
+| 8 Originalgetreues Verhalten | nicht prüfbar, solange nichts läuft |
+
+### Erster Start unter Windows (Meilenstein 3, Teil 3)
+
+Nach Behebung des unten beschriebenen Upstream-Versatzes:
+
+| Gegenstand | Ergebnis |
+|---|---|
+| Modul geladen | `[staticrecomp] module loaded: gGMSE01_recomp.dll entry=0x8000522C` |
+| Modulgröße | 91.837.952 Bytes |
+| Fenstertitel | `ModernGekko - Super Mario Sunshine [GMSE01] \| 30.0 FPS` |
+| Bildrate | Anlauf 0 → 17 → **30,0 FPS**, danach über mehrere Messpunkte stabil |
+| Bild | Bildschirmabzug über das Automationsprotokoll erzeugt (394.199 Bytes PNG) |
+
+30,0 FPS ist Sunshines native Bildrate, das Spiel läuft also mit Volltempo. Der
+Abzug zeigt die gerenderte Eröffnungssequenz mit Himmel, Wolken, Linsenreflexen
+und Vordergrundgeometrie — kein Platzhalterbild.
+
+### Eingabe und Speichern (Meilenstein 3, Teil 4)
+
+Über das Automationsprotokoll (`pad_frames`) wurden Controllereingaben
+eingespeist und der Fortschritt mit Bildschirmabzügen belegt:
+
+| Schritt | Eingabe | Beobachtet |
+|---|---|---|
+| 1 | — | Eröffnungssequenz, Himmel mit Flugzeug |
+| 2 | `start` | Titelbildschirm: Logo, Palme, Regenbogen, Startaufforderung |
+| 3 | `a` | Dateiauswahl mit Mario am Strand, Blöcken A/B/C und Options-Schild |
+| 4 | `a` | Memory-Card-Abfrage bestätigt |
+| 5 | — | Datenauswahl mit drei freien Plätzen |
+
+Damit ist belegt:
+
+- **Eingabe wirkt** — jeder Tastendruck führte zum erwarteten Bildschirmwechsel.
+- **Rendering ist korrekt** — Figurenmodell, Text, Wasser, Schatten, Transparenz
+  und Menügrafik werden sauber gezeichnet.
+- **Speichern arbeitet** — beim Bestätigen wurde eine Memory-Card-Datei von
+  57.408 Bytes im Benutzerverzeichnis angelegt, und der anschließende Bildschirm
+  zeigt die Datenauswahl.
+
+Die Bildrate blieb während der gesamten Sequenz bei 29,9 bis 30,0 FPS.
+
+Über längere Standzeit wechselt Mario in die Ruhe-Animation (schlafend) und bei
+erneuter Eingabe zurück — die Animationszustände laufen also über die Zeit
+korrekt weiter.
+
+**Ausdrücklich noch nicht überprüft:**
+
+- **Ton.** Es liegt weder eine hörbare Prüfung noch ein Logeintrag vor, der
+  Audioausgabe belegen oder widerlegen würde.
+- **Eigentliches Spielgeschehen.** Die Auswahl eines Speicherplatzes ist über
+  das Automationsprotokoll nicht gelungen; die Eingaben kommen an, treffen aber
+  die Cursor-Mechanik der Dateiauswahl nicht. Das ist eine Grenze der blinden
+  Steuerung, kein belegter Fehler des Ports. Am schnellsten ist das mit
+  Controller oder Tastatur von Hand zu prüfen.
+- **Laden** eines zuvor gespeicherten Fortschritts.
+
+### Upstream-Defekt: CPU-ABI-Versatz in ModernGekko
+
+Das gebaute Modul wurde von der Laufzeit zunächst abgewiesen:
+
+```
+initialization failed: native module was rejected: CPU ABI mismatch
+```
+
+Das ist kein Fehler dieses Projekts. Der vorgesehene Einstiegspunkt
+`moderngekko-port run` scheitert identisch, weil er intern denselben Aufruf
+absetzt, und das offizielle `ModernGekko-Template` fährt dieselbe Pipeline.
+
+**Gemessene Ursache.** Ein kleines Testprogramm gegen beide Header:
+
+| Header | CPU-ABI | `sizeof(CPUState)` |
+|---|---|---|
+| GXRuntime (das Modul baut damit) | 3 | 3528 Bytes |
+| ModernGekko (die Laufzeit fordert das) | 4 | 3536 Bytes |
+
+Der Unterschied ist genau ein Feld, `int64_t cycle_budget` — die 8 Bytes. Die
+übrigen scheinbaren Abweichungen im Header sind nur Typ-Aliase (`u32` gegen
+`uint32_t`). Dazu passt, dass der LLVM-Emitter `func_..._budget` und
+`ppc_native_region_available` erzeugt: Beides gehört zu dieser neueren ABI.
+
+**Lage im Upstream.** ModernGekkos Standardbranch ist `master`; dessen HEAD ist
+`5417826c` — genau unser Pin, es gibt keinen neueren Stand. Sein
+Vendor-Submodul zeigt auf RecompCores Branch `moderngekko-vendor` (ABI 3).
+RecompCore pflegt daneben `moderngekko-runtime` (`c6a600eb`) mit ABI 4 und
+`cycle_budget`.
+
+Damit stehen zwei unvollständige Stände nebeneinander:
+
+- `moderngekko-vendor` baut, erzeugt aber Module, die die Laufzeit ablehnt.
+- `moderngekko-runtime` hat die passende ABI, **übersetzt aber selbst nicht**:
+  `StaticRecompCore::GetExceptionCheckTarget` ist als `override` deklariert,
+  obwohl `JitBase` die Methode nicht kennt (MSVC: C3668).
+
+**Vorgehen hier.** Das Vendor-Submodul wird auf `c6a600eb` gesetzt, und das
+gegenstandslose `override` wird entfernt — die Methode kommt im gesamten
+`Source/`-Baum genau einmal vor und hat keinen Aufrufer. Beides ist in
+[../scripts/bootstrap.ps1](../scripts/bootstrap.ps1) verankert; die Patches
+liegen unter [../patches/](../patches/).
+
+### Angewandte Patches
+
+| Patch | Ziel | Grund |
+|---|---|---|
+| `dolrecomp-msvc-popcount.patch` | `ref/DolRecomp` | `__builtin_popcountll` kennt MSVC nicht; ersetzt durch `std::bitset::count` (keine Annahme über den Befehlssatz) |
+| `recompcore-abi-gaps.patch` | `ref/ModernGekko/vendor/dolphin` | zwei Lücken im Branch `moderngekko-runtime` (siehe unten) |
+
+Der zweite Patch schließt:
+
+1. **Gegenstandsloses `override`.** `StaticRecompCore::GetExceptionCheckTarget`
+   ist als `override` deklariert, obwohl `JitBase` die Methode nicht kennt.
+   Sie kommt im gesamten `Source/`-Baum genau einmal vor und hat keinen
+   Aufrufer, das `override` entfällt daher ersatzlos.
+2. **Fehlende Inline-Helfer in GXRuntime.** DolRecomps Emitter erzeugt stets
+   die `_inline`-Formen von `ppc_fp_available`, `ppc_psq_load` und
+   `ppc_psq_store`. GXRuntimes Kopie der CPU-Laufzeit deklarierte nur die
+   Nicht-Inline-Varianten. Die drei Wrapper werden ergänzt und leiten weiter —
+   laut Kommentar in `DolRecomp/src/cpu/cpu.h` ist genau das der Vertrag: Die
+   hostende Laufzeit stellt die `_inline`-Formen bereit, ein Schnellpfad ist
+   optional.
+
+**Gemeinsame Wurzel.** GXRuntimes `include/core/cpu.h` ist eine veraltete
+Dublette von `DolRecomp/src/cpu/cpu.h`. Beide tragen denselben Include-Guard
+`DOLRECOMP_CPU_H`, sodass je Übersetzungseinheit nur einer wirkt. DolRecomps
+eigene Fassung ist die vollständige: Sie enthält `cycle_budget` (ABI 4),
+GXRuntimes Erweiterung `external_pointer` und alle drei Inline-Helfer. Die
+Pins belegen den Versatz unmittelbar — `moderngekko-runtime` pinnt DolRecomp
+`1bec3554`, dessen Emitter die psq-Inlines erzeugt, während das mitgelieferte
+GXRuntime sie nicht kennt.
+
+Zusätzlich baut ModernGekko mit
+`/D_SILENCE_CXX20_OLD_SHARED_PTR_ATOMIC_SUPPORT_DEPRECATION_WARNING`, weil der
+Baum mit `/WX` übersetzt und `RelocationAliases.cpp` das unter C++20 veraltete
+`std::atomic_store_explicit` für `shared_ptr` nutzt. Die MSVC-Vorgabe
+`/DWIN32 /D_WINDOWS /EHsc` muss dabei mitgeführt werden, sonst scheitert
+`<chrono>` an C4530.
+
+### Bekannte Hindernisse
+
+1. **Keine Symbol-Map für `GMSE01`.** Die US-Disc enthält keine `mario.MAP`
+   (nachgeprüft: 174 Dateien, keine Symboldatei). Hooks binden ohnehin an rohe
+   Adressen, aber jede Hook-Stelle muss erst ermittelt werden. Ausgangspunkte:
+   Dolphins `GMSE01.ini` mit adressbasierten Codes einschließlich zweier
+   `$Widescreen`-Einträge, und die CC0-Symbole der Decompilation für `GMSJ01`
+   (namensgleich, adressverschieden). Siehe
+   [01-MACHBARKEIT.md](01-MACHBARKEIT.md), Abschnitt 2.1.
+2. **Widescreen-Fehlerbild.** Der Referenzport dokumentiert für Dolphins
+   generischen Widescreen-Hack bei Sunshine abgetrennte Schatten,
+   Projektionsnähte und duplizierte Geometrie. Der generische Hack ist damit
+   kein gangbarer Weg.
+3. **Framerate-Entkopplung ungeprüft.** Ob sich der Bildabschluss vom emulierten
+   VI-Interrupt lösen lässt, ist offen.
+
+## Was dieses Projekt nicht enthält
+
+Keine Spieldaten, keine Symbole, keine rekompilierten Module. Disc-Abbild,
+extrahiertes Dateisystem, generierter Code und gebaute Module bleiben lokal und
+sind über `.gitignore` ausgeschlossen. Module aus rekompiliertem Spielcode sind
+abgeleitete Werke und dürfen nicht weitergegeben werden.
