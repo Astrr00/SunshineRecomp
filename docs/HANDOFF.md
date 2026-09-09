@@ -1,0 +1,326 @@
+# Übergabe: Nativer Super-Mario-Sunshine-Port für Windows
+
+Stand: 2026-09-09. Dieses Dokument ist die vollständige Übergabe. Es setzt kein
+Vorwissen aus der bisherigen Sitzung voraus.
+
+---
+
+## 1. Auftrag
+
+Nativer Port von Super Mario Sunshine für **Windows x86-64**. Vorbild ist
+Dusklight für Twilight Princess: originalgetreuer Lauf plus moderne Grafik-,
+Anzeige- und Steuerungsoptionen.
+
+**Android wurde vom Auftraggeber am 2026-09-09 ausdrücklich gestrichen.** Damit
+entfallen die ursprüngliche Anforderung 6, die Touch-Belegungen aus Anforderung 7
+und die Smartphone-Seitenverhältnisse (19,5:9, 20:9) aus Anforderung 3.
+Ultrawide (21:9, 32:9) bleibt.
+
+Verbindliche Funktionen, Nummerierung wie im Auftrag:
+
+1. Unbegrenzte Framerate (entkoppeltes Rendering, feste Simulationstakte,
+   Interpolation, keine Artefakte bei Kameraschnitten)
+2. Hohe Auflösungen, **Trennung von interner Render- und Ausgabeauflösung**
+3. Echtes Widescreen ohne schwarze Balken, ohne Strecken, ohne pauschales Zoomen
+4. HUD-Anker, Menüs, Zwischensequenzen; vorgerenderte Videos gesondert
+5. Windows-Anwendung mit Fenster, randlosem Vollbild, Controller/Tastatur/Maus
+6. *(entfallen)*
+7. Analoge GC-Schultertaste (Spritzen im Laufen vs. im Stand), freie Belegung,
+   Empfindlichkeit, Invertierung, Totzonen
+8. Originalgetreues Spielverhalten, Speichern/Laden
+9. Import einer eigenen Spielkopie, keine Mitlieferung von Spieldaten
+
+Arbeitsprinzip des Auftraggebers: **Funktionen erst nach tatsächlicher
+Überprüfung als fertig bezeichnen.** Ein Fenster mit Platzhaltergrafik ist kein
+spielbarer Port.
+
+---
+
+## 2. Architekturentscheidung (getroffen, begründet, nicht neu aufrollen)
+
+**Statische Recompilation** mit DolRecomp + ModernGekko. **Nicht** Decompilation,
+**nicht** Aurora.
+
+Begründung, jeweils am Quellcode geprüft:
+
+- **doldecomp/sms** steht bei 38,82 % dekompiliert / 17,45 % gelinkt und
+  unterstützt nur `GMSJ01` (JP) und `GMSP01` (PAL, im README selbst als defekt
+  markiert), **nicht** die US-Fassung. Damit trägt der Dusklight-Weg nicht.
+  Nutzbar bleibt die Decomp als **Referenz** (CC0): 38.262 Symbolnamen und
+  Strukturwissen für `GMSJ01` — adressverschieden zu GMSE01.
+- **Aurora** exportiert `include/dolphin/gx/*.h`, `ai.h`, `card.h`, `dvd.h`; es
+  ist eine quellcodeseitige Neuimplementierung des GameCube-SDK auf WebGPU. Ein
+  rekompiliertes Binary ruft kein `GXBegin()` als linkbares Symbol auf, sondern
+  schreibt in GX-FIFO-Register. Es gibt keine Bindungsstelle. Als späterer
+  optionaler nativer Renderer notiert, in v1 nicht auf dem kritischen Pfad.
+
+Ausführlich in `docs/01-MACHBARKEIT.md`.
+
+**Lizenzfolge:** ModernGekko und DolRecomp sind GPL-3.0 (Dolphin-Abstammung
+GPL-2.0-or-later). Der Port **muss** GPL-3.0-or-later sein. `LICENSE` liegt bei.
+
+---
+
+## 3. Repository und Umgebung
+
+| | |
+|---|---|
+| Arbeitsverzeichnis | `C:\Users\niemc\Documents\Projekte\SunshineRecomp` |
+| GitHub | `Astrr00/SunshineRecomp` (**privat**), Branch `main` |
+| Letzter Commit | `2ccf8cc` "Aufloesungsverhalten vermessen (Anforderung 2)" |
+| Spielkopie des Nutzers | `C:\Users\niemc\Documents\Projekte\Super Mario Sunshine (USA).rvz` |
+
+Werkzeugkette, verifiziert:
+
+| Werkzeug | Version | Ort |
+|---|---|---|
+| MSVC `cl.exe` | 19.44.35228 | `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools` |
+| Windows SDK | 10.0.26100.0 | Standard |
+| CMake | 4.4.3 | winget, user scope |
+| LLVM / clang-cl | 20.1.8 | `ref/llvm` (per Bootstrap geladen) |
+| Ninja | 1.13.2 | auf PATH |
+| Python | 3.14.7 | auf PATH |
+
+`vcvars64.bat` muss vor jedem CMake/Ninja-Aufruf im selben `cmd`-Prozess laufen.
+`scripts/build.ps1` findet MSVC über `vswhere` und erledigt das.
+
+---
+
+## 4. Was im Repository liegt
+
+```
+docs/01-MACHBARKEIT.md   Architekturentscheidung, geprüfte Commits, Lizenzlage
+docs/02-STATUS.md        Verifizierte Ergebnisse, offene Punkte, Upstream-Defekte
+docs/HANDOFF.md          dieses Dokument
+patches/                 zwei Patches gegen Upstream-Lücken (siehe Abschnitt 7)
+scripts/bootstrap.ps1    klont Abhängigkeiten auf feste Commits, lädt LLVM, patcht
+scripts/build.ps1        baut DolRecomp (clang-cl) und ModernGekko (MSVC)
+tools/import/            Disc-Import: gcm.py, importer.py, __main__.py
+tests/test_import.py     14 Tests gegen ein synthetisches GameCube-Abbild
+```
+
+Nicht im Repository und per `.gitignore` ausgeschlossen: `build/`, `ref/`,
+Abbilder, `main.dol`, generierter Code, Module. **Es werden keine Spieldaten
+verteilt oder heruntergeladen.**
+
+---
+
+## 5. Vollständiger Ablauf von null auf lauffähig
+
+```powershell
+./scripts/bootstrap.ps1                 # Abhängigkeiten + LLVM + Patches
+./scripts/build.ps1 -Target all -Test   # DolRecomp und ModernGekko
+```
+
+RVZ nach ISO wandeln (der Importer lehnt komprimierte Container bewusst ab):
+
+```powershell
+./ref/ModernGekko/Binary/x64/DolphinTool.exe convert `
+  -i "C:\Users\niemc\Documents\Projekte\Super Mario Sunshine (USA).rvz" `
+  -o "build\Super Mario Sunshine (USA).iso" -f iso
+```
+
+Importieren:
+
+```powershell
+python tools/import "build\Super Mario Sunshine (USA).iso" --to build\game
+```
+
+Modul bauen (rund 20 Minuten):
+
+```powershell
+./ref/ModernGekko/build/moderngekko-port.exe build build\game `
+  --backend c --toolchain clang --output build\mod
+```
+
+Starten:
+
+```powershell
+./ref/ModernGekko/build/moderngekko-run.exe --game build\game `
+  --module build\mod\GMSE01\<hash>\gGMSE01_recomp.dll --user-dir build\userdir
+```
+
+---
+
+## 6. Was verifiziert ist — und was nicht
+
+### Verifiziert
+
+| Gegenstand | Beleg |
+|---|---|
+| DolRecomp gebaut | ctest 19/19 |
+| ModernGekko gebaut | alle eigenen Tests grün |
+| Import korrekt | **byte-identisch** zu DolphinTool über 179 Dateien |
+| Revision bestätigt | `GMSE01` Rev 0, 1.459.978.240 Bytes, SHA-256 `67cec163…3e51d` |
+| Recompilation | 16.618 LLVM-Chunks bzw. 224 C-Dateien, Exit 0 |
+| Modul geladen | `[staticrecomp] module loaded … entry=0x8000522C` |
+| Bild | Eröffnungssequenz, Titelbildschirm, Dateiauswahl gerendert |
+| Bildrate | stabil 29,9–30,0 FPS (Sunshines native Rate) |
+| Eingabe | `start` → Titel, `a` → Dateiauswahl, jeweils belegt |
+| Speichern | Memory-Card-Datei mit 57.408 Bytes angelegt |
+| Auflösung | 1× = 640×477, 3× = 1920×1430, 6× = 3840×2859, je 30 FPS |
+
+### Nicht verifiziert
+
+- **Ton.** Weder Höreindruck noch Logeintrag. In beide Richtungen offen.
+- **Eigentliches Spielgeschehen.** Die Auswahl eines Speicherplatzes gelingt über
+  das Automationsprotokoll nicht — Eingaben kommen an (Mario reagiert), treffen
+  aber die Cursor-Mechanik der Dateiauswahl nicht. **Das ist eine Grenze der
+  blinden Fernsteuerung, kein belegter Fehler.** Am schnellsten von Hand mit
+  Controller oder Tastatur zu prüfen.
+- **Laden** eines gespeicherten Fortschritts.
+- Anforderungen **1, 3, 4, 7** sind unbearbeitet.
+
+---
+
+## 7. Upstream-Defekte und die beiden Patches
+
+**Wurzel:** GXRuntimes `include/core/cpu.h` ist eine veraltete Dublette von
+`DolRecomp/src/cpu/cpu.h`. Beide tragen denselben Include-Guard
+`DOLRECOMP_CPU_H`, sodass je Übersetzungseinheit nur einer wirkt. DolRecomps
+Fassung ist die vollständige (enthält `cycle_budget`, `external_pointer` und alle
+drei Inline-Helfer).
+
+**Folge:** ModernGekkos Laufzeit verlangt CPU-ABI 4 (`sizeof(CPUState)` = 3536),
+das gepinnte GXRuntime liefert ABI 3 (3528). Ein damit gebautes Modul wird beim
+Start abgewiesen: `native module was rejected: CPU ABI mismatch`. Das trifft auch
+das offizielle `ModernGekko-Template`, weil es dieselbe Pipeline fährt.
+
+**Lösung, in `scripts/bootstrap.ps1` verankert:**
+
+1. Vendor-Submodul `ref/ModernGekko/vendor/dolphin` auf RecompCores Branch
+   `moderngekko-runtime`, Commit `c6a600eb434056873566ef951d11974619a7ed31`
+   (dort ABI 4 mit `cycle_budget`).
+2. `patches/recompcore-abi-gaps.patch` schließt zwei Lücken dieses Branches:
+   - `StaticRecompCore::GetExceptionCheckTarget` ist als `override` deklariert,
+     obwohl `JitBase` die Methode nicht kennt (MSVC C3668). Sie kommt im ganzen
+     `Source/`-Baum einmal vor und hat keinen Aufrufer → `override` entfällt.
+   - GXRuntime fehlen die Inline-Wrapper `ppc_fp_available_inline`,
+     `ppc_psq_load_inline`, `ppc_psq_store_inline`, die DolRecomps Emitter stets
+     erzeugt. Ergänzt als Weiterleitungen — laut Kommentar in
+     `DolRecomp/src/cpu/cpu.h` ist genau das der Vertrag (die hostende Laufzeit
+     stellt sie bereit, ein Schnellpfad ist optional).
+3. `patches/dolrecomp-msvc-popcount.patch`: `__builtin_popcountll` kennt MSVC
+   nicht; ersetzt durch `std::bitset<64>::count()` (keine Annahme über den
+   Befehlssatz, anders als `__popcnt64`).
+
+---
+
+## 8. Fallstricke, die Zeit gekostet haben
+
+1. **`--backend c`, nicht `llvm`.** `moderngekko-port` ruft sein eigenes
+   gepinntes DolRecomp **ohne** `--runtime moderngekko` auf und verarbeitet die
+   Ausgabe über RecompCores Modulvorlage plus GXRuntime. Mit `--backend llvm`
+   emittiert der Emitter `ppc_native_region_available` und `func_..._budget`, die
+   dort fehlen. Die 224 erzeugten C-Dateien decken sich mit der Angabe des
+   Apple-Referenzports SunPad ("221 C chunks, ~220 MiB") — das ist der richtige
+   Pfad. Die Meldung *"the ModernGekko runtime requires the LLVM backend"* stammt
+   vom **eigenständigen** DolRecomp und gilt für diesen Pfad nicht.
+2. **Windows-Pfadlänge.** `moderngekko-port` legt seinen Cache relativ zum
+   Arbeitsverzeichnis an, mit 81 Zeichen langem Hash-Ordner. Immer einen kurzen
+   absoluten `--output` setzen. `LongPathsEnabled` steht zwar auf 1, die
+   Programme tragen aber kein passendes Manifest.
+3. **`-DCMAKE_CXX_FLAGS` ersetzt die Vorgabe**, statt sie zu ergänzen. MSVCs
+   `/DWIN32 /D_WINDOWS /EHsc` muss mitgeführt werden, sonst scheitert `<chrono>`
+   an C4530. Der Baum baut mit `/WX`, und `RelocationAliases.cpp` braucht
+   zusätzlich `/D_SILENCE_CXX20_OLD_SHARED_PTR_ATOMIC_SUPPORT_DEPRECATION_WARNING`.
+4. **`test_rpx.exe` scheitert** an einem zlib-ng/MSVC-Linkerfehler
+   (`__imp__aligned_malloc`). Das ist ein Testziel des eingebetteten DolRecomp;
+   die benötigten Programme baut man gezielt mit
+   `--target moderngekko-port dolrecomp moderngekko-run moderngekko-module-info`.
+5. **`moderngekko-module-info` meldet fälschlich "CPU ABI mismatch"**, weil es
+   gegen ModernGekkos eigenen Header prüft. Maßgeblich ist der tatsächliche
+   Start.
+6. **Compilerwechsel im bestehenden CMake-Build-Verzeichnis** setzt Cache-Werte
+   zurück (`DOLRECOMP_ENABLE_LLVM` fiel dabei still auf `OFF`). Bei
+   Toolchain-Wechsel das Verzeichnis löschen.
+
+---
+
+## 9. Automationsprotokoll — das wichtigste Werkzeug zum Prüfen
+
+Mit `--automation-dir <pfad>` legt die Laufzeit `<pfad>/commands/` an und
+verarbeitet dort abgelegte Textdateien. Damit lassen sich Eingaben einspeisen und
+Bilder aufnehmen, ohne am Rechner zu sitzen.
+
+```
+command=pad_frames
+port=0
+frames=12
+start=1
+```
+
+```
+command=screenshot
+path=C:\...\bild.png
+```
+
+Weitere Befehle: `pad`, `clear_pad`, `pause`, `resume`, `save_state`,
+`load_state`, `read_memory`, `write_memory`, `stop`. Pad-Felder unter anderem
+`a b x y z start l r l_analog r_analog main_x main_y c_x c_y dpad_*`.
+
+`l_analog`/`r_analog` sind für **Anforderung 7** zentral: Sunshine unterscheidet
+die halb und ganz gedrückte Schultertaste.
+
+Die Bildgröße lässt sich aus dem PNG-Kopf lesen (Bytes 16–23, Big-Endian) — so
+wurde die Auflösungsmessung gemacht.
+
+---
+
+## 10. Nächster Schritt: Anforderung 3, echtes Widescreen
+
+**Hier wurde die Arbeit unterbrochen.**
+
+Ausgangslage: Alle Messungen liegen bei rund 1,34 (4:3). Der generische
+Widescreen-Hack von Dolphin ist **kein** gangbarer Weg — SunPads
+`docs/KNOWN_ISSUES.md` (Punkt 9) dokumentiert für Sunshine abgetrennte Schatten,
+harte Projektionsnähte und duplizierte Geometrie, dazu einen Hitzeflimmer-Effekt,
+der eine Geisterkopie der Szene erzeugt.
+
+**Der vielversprechende Hebel:** Dolphin liefert
+`ref/ModernGekko/vendor/dolphin/Data/Sys/GameSettings/GMSE01.ini` mit
+spielseitigen Codes für genau diese Revision. Der Abschnitt `[Gecko]` beginnt bei
+Zeile 96 und enthält **zwei** Einträge mit dem Titel `$Widescreen` (Zeile 118,
+einer davon gamemasterplc zugeschrieben, und Zeile 188 im Abschnitt
+`[Gecko_RetroAchievements_Verified]`). Sie patchen Gleitkommawerte an festen
+GMSE01-Adressen, also die Projektion im Spiel selbst statt im Emulator.
+
+Aufgaben:
+
+1. Klären, wie ModernGekko Gecko-Codes aktiviert (Dolphin nutzt üblicherweise
+   einen `[Gecko_Enabled]`-Abschnitt in einer nutzerseitigen Spiel-INI unter
+   `<user-dir>/GameSettings/GMSE01.ini`). `MODERNGEKKO_GAME_SETTINGS_OVERRIDE`
+   in ModernGekkos CMake ist ein weiterer möglicher Weg.
+2. Aktivieren und an echten Spielszenen prüfen: Gameplay, HUD, Menüs,
+   Zwischensequenzen, jeweils mit Bildern.
+3. Gezielt auf die dokumentierten Fehlerbilder achten: Schatten, Nähte,
+   duplizierte Geometrie, Himmel, Wasser, Spiegelungen, Bildschirmeffekte.
+4. Sichtbarkeitsprüfungen (Culling) am erweiterten Bildrand kontrollieren.
+5. Erst danach 21:9 und 32:9 angehen.
+
+**Wichtige Einschränkung für die Anforderungen 1, 3 und 4:** Die US-Disc enthält
+**keine** `mario.MAP`. Nachgeprüft: 174 Dateien, nur `opening.bnr`, `data/` und
+`AudioRes/`, keine Symboldatei. Die Symbol-Map gehört zur japanischen Fassung,
+weshalb die Decompilation auf `GMSJ01` zielt. ModernGekkos Mod-ABI
+(`include/moderngekko/mod_abi.h`, `RECOMP_PATCH` / `RECOMP_HOOK` /
+`RECOMP_HOOK_RETURN` auf `CPUState*`) bindet zwar an **rohe 32-Bit-Adressen**,
+sodass Hooks grundsätzlich möglich sind — aber jede Hook-Stelle muss erst
+gefunden werden. Quellen dafür: die adressbasierten Codes in `GMSE01.ini`, die
+CC0-Symbole der Decompilation für `GMSJ01` (namensgleich, adressverschieden) und
+DolRecomps eigene Analyse.
+
+**Anforderung 1 bleibt der härteste Posten.** Kein untersuchtes Projekt liefert
+entkoppeltes Rendering. Der Bildabschluss hängt am emulierten VI-Interrupt; ob
+sich das sauber lösen lässt, ist ungeprüft und das größte offene Risiko.
+
+---
+
+## 11. Arbeitsweise, die der Auftraggeber erwartet
+
+- Deutsch schreiben.
+- Am **tatsächlichen Quellcode** entscheiden, nicht an READMEs.
+- Befunde messen statt vermuten (Strukturgrößen, Bildgrößen, Prüfsummen).
+- Eigene Irrtümer klar benennen und korrigieren.
+- Nichts als fertig bezeichnen, was nicht überprüft wurde.
+- Erst auf ausdrückliche Aufforderung committen und pushen.
+- Keine Spieldaten verteilen, nichts automatisch herunterladen.
