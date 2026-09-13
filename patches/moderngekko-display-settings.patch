@@ -1,0 +1,340 @@
+--- a/include/moderngekko/runtime.hpp
++++ b/include/moderngekko/runtime.hpp
+@@ -32,6 +32,9 @@
+ {
+   std::string backend;
+   std::optional<int> internal_resolution_scale;
++  // Initial window client size in physical pixels; zero preserves saved geometry.
++  int output_width = 0;
++  int output_height = 0;
+ };
+ 
+ struct AudioSettings
+--- a/src/runtime/dolphin_runtime.cpp
++++ b/src/runtime/dolphin_runtime.cpp
+@@ -581,6 +581,11 @@
+ Runtime::Runtime(std::unique_ptr<Impl> impl) : m_impl(std::move(impl)) {}
+ 
+ RuntimeCreateResult Runtime::Create(RuntimeConfig config) {
++  const auto& graphics = config.graphics;
++  if ((graphics.output_width != 0 || graphics.output_height != 0) &&
++      (graphics.output_width < 320 || graphics.output_height < 240 ||
++       graphics.output_width > 8192 || graphics.output_height > 8192))
++    return {{}, RuntimeError{RuntimeErrorCode::InvalidState, "invalid output client size"}};
+   std::lock_guard lock(s_runtime_mutex);
+   if (s_runtime_active)
+     return {
+@@ -643,10 +648,17 @@
+ 
+   if (!s_external_ui_common) {
+     UICommon::SetUserDirectory(impl->config.user_directory.string());
++    // Init opens logging and configuration files; render backends later create
++    // children of Cache. A fresh user directory must have these parents first.
++    UICommon::CreateDirectories();
+     UICommon::Init();
+     impl->ui_initialized = true;
+   }
+   Config::SetBase(Config::MAIN_FULLSCREEN, impl->config.fullscreen);
++  if (impl->config.graphics.output_width != 0) {
++    Config::SetBase(Config::MAIN_RENDER_WINDOW_WIDTH, impl->config.graphics.output_width);
++    Config::SetBase(Config::MAIN_RENDER_WINDOW_HEIGHT, impl->config.graphics.output_height);
++  }
+ 
+   if (impl->config.headless)
+     impl->platform = Platform::CreateHeadlessPlatform();
+@@ -851,10 +863,10 @@
+   title_thread.request_stop();
+   if (title_thread.joinable())
+     title_thread.join();
+-  m_impl->platform->SaveWindowGeometry();
+   StopAutomation();
+   Core::Stop(Core::System::GetInstance());
+   Core::Shutdown(Core::System::GetInstance());
++  m_impl->platform->SaveWindowGeometry();
+   m_impl->booted = false;
+   m_impl->running = false;
+   return {};
+--- a/tests/frontend_config_test.cpp
++++ b/tests/frontend_config_test.cpp
+@@ -138,6 +138,33 @@
+                                  directory) != "SDL/9/Custom Controller")
+     return 12;
+ 
++  // Display settings survive legacy factor changes and ignore legacy label order.
++  auto display = loaded;
++  display.dolphin_scale = 5;
++  display.output_width = 1920;
++  display.output_height = 1080;
++  if (!moderngekko::frontend::SaveConfig(directory, display, &error)) return 20;
++  if (!moderngekko::frontend::SaveConfig(directory, "3840x2160", true, controller, &error)) return 21;
++  const auto changed = moderngekko::frontend::LoadConfig(directory, false);
++  if (!changed || changed.dolphin_scale != 6 || changed.output_width != 1920 || changed.output_height != 1080)
++    return 22;
++  for (const auto& contents : {
++      "internal_scale=5\nresolution=640x528\noutput_resolution=1280x720\n",
++      "resolution=640x528\ninternal_scale=5\noutput_resolution=1280x720\n"}) {
++    { std::ofstream file(directory / "config.ini"); file << contents; }
++    const auto parsed = moderngekko::frontend::LoadConfig(directory, false);
++    if (!parsed || parsed.dolphin_scale != 5 || parsed.output_width != 1280 || parsed.output_height != 720)
++      return 23;
++  }
++  for (const auto& contents : {
++      "internal_scale=0\n", "internal_scale=13\n", "internal_scale=3x\n",
++      "internal_scale=3\noutput_resolution=1920x\n",
++      "internal_scale=3\noutput_resolution=319x720\n",
++      "internal_scale=3\noutput_resolution=1920x8193\n",
++      "internal_scale=3\noutput_resolution=1920x1080junk\n"}) {
++    { std::ofstream file(directory / "config.ini"); file << contents; }
++    if (moderngekko::frontend::LoadConfig(directory, false)) return 24;
++  }
+   fs::remove_all(directory);
+   return 0;
+ }
+--- a/tools/frontend_config.cpp
++++ b/tools/frontend_config.cpp
+@@ -55,6 +55,26 @@
+   return false;
+ }
+ 
++bool ParseOutputSize(std::string_view value, int* width, int* height) {
++  if (value == "auto") { *width = *height = 0; return true; }
++  const auto x = value.find('x');
++  if (x == std::string_view::npos) return false;
++  const auto w = std::from_chars(value.data(), value.data() + x, *width);
++  const auto h = std::from_chars(value.data() + x + 1, value.data() + value.size(), *height);
++  return w.ec == std::errc{} && w.ptr == value.data() + x &&
++         h.ec == std::errc{} && h.ptr == value.data() + value.size() &&
++         *width >= 320 && *height >= 240 && *width <= 8192 && *height <= 8192;
++}
++
++int LegacyScale(std::string_view resolution) {
++  for (const auto& option : SupportedResolutions())
++    if (resolution == option.text) return option.dolphin_scale;
++  for (int scale = 1; scale <= 12; ++scale)
++    if (resolution == std::to_string(640 * scale) + "x" + std::to_string(528 * scale))
++      return scale;
++  return 0;
++}
++
+ fs::path ControllerConfigPath(const fs::path &user_directory) {
+ #ifdef MODERNGEKKO_GAMECUBE_CONTROLLERS
+   return user_directory / "Config" / "GCPadNew.ini";
+@@ -74,11 +94,11 @@
+ } // namespace
+ 
+ const std::vector<ResolutionOption> &SupportedResolutions() {
+-  // These are the output-resolution labels used by Dolphin's integer EFB
+-  // scales.
++  // Legacy config labels only. The UI displays the actual integer factor.
+   static const std::vector<ResolutionOption> resolutions = {
+       {"640x528", 1},   {"1280x720", 2},  {"1920x1080", 3},  {"2560x1440", 4},
+-      {"3840x2160", 6}, {"5120x2880", 8}, {"7680x4320", 12},
++      {"3200x2640", 5}, {"3840x2160", 6}, {"4480x3696", 7}, {"5120x2880", 8},
++      {"5760x4752", 9}, {"6400x5280", 10}, {"7040x5808", 11}, {"7680x4320", 12},
+   };
+   return resolutions;
+ }
+@@ -121,6 +141,15 @@
+     const std::string value = Lower(raw_value);
+     if (key == "resolution")
+       config.resolution = value;
++    else if (key == "internal_scale") {
++      const auto parsed = std::from_chars(value.data(), value.data() + value.size(), config.dolphin_scale);
++      if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() ||
++          config.dolphin_scale < 1 || config.dolphin_scale > 12)
++        return {.error = "internal_scale must be between 1 and 12"};
++    } else if (key == "output_resolution") {
++      if (!ParseOutputSize(value, &config.output_width, &config.output_height))
++        return {.error = "output_resolution must be auto or 320x240..8192x8192"};
++    }
+     else if (key == "backend" || key == "graphics_backend") {
+       config.graphics_backend = NormalizeGraphicsBackend(raw_value);
+       if (config.graphics_backend.empty())
+@@ -167,8 +196,8 @@
+       config.netplay_buffer = value;
+     }
+   }
+-  if (config.resolution.empty())
+-    return {.error = "config.ini is missing resolution=<width>x<height>"};
++  if (config.resolution.empty() && config.dolphin_scale == 0)
++    return {.error = "config.ini is missing internal_scale (or legacy resolution)"};
+ 
+   std::erase(config.controllers, std::string{});
+   if (config.controllers.empty() && !config.controller.empty())
+@@ -182,6 +211,11 @@
+   if (!ValidNetplayAddress(config.netplay_address))
+     return {.error = "netplay address must be an IPv4 address or hostname"};
+ 
++  if (config.dolphin_scale != 0) {
++    for (const auto& option : SupportedResolutions())
++      if (option.dolphin_scale == config.dolphin_scale) config.resolution = option.text;
++    return config;
++  }
+   for (const ResolutionOption &option : SupportedResolutions()) {
+     if (config.resolution == option.text) {
+       config.dolphin_scale = option.dolphin_scale;
+@@ -210,7 +244,11 @@
+                 std::string *error) {
+   const std::string graphics_backend =
+       NormalizeGraphicsBackend(config.graphics_backend);
+-  if (config.resolution.empty() || graphics_backend.empty() ||
++  const int scale = config.dolphin_scale != 0 ? config.dolphin_scale : LegacyScale(config.resolution);
++  const bool valid_output = (config.output_width == 0 && config.output_height == 0) ||
++      (config.output_width >= 320 && config.output_height >= 240 &&
++       config.output_width <= 8192 && config.output_height <= 8192);
++  if (scale < 1 || scale > 12 || !valid_output || graphics_backend.empty() ||
+       config.netplay_nickname.empty() ||
+       config.netplay_nickname.size() > 30 ||
+       config.netplay_nickname.find_first_of("\r\n") != std::string::npos ||
+@@ -249,10 +287,12 @@
+     return false;
+   }
+   file << "# ModernGekko frontend settings\n"
+-          "# This is Dolphin's internal render target, not the window size.\n"
++          "# internal_scale: EFB factor. output_resolution: window client pixels.\n"
+           "[Video]\n"
+-          "resolution="
+-       << config.resolution << '\n'
++          "internal_scale="
++       << scale << '\n'
++       << "output_resolution=" << (config.output_width == 0 ? "auto" :
++           std::to_string(config.output_width) + "x" + std::to_string(config.output_height)) << '\n'
+        << "backend=" << graphics_backend << '\n'
+        << "fullscreen=" << (config.fullscreen ? "true" : "false") << '\n'
+        << "show_fps_in_title=" << (config.show_fps_in_title ? "true" : "false")
+@@ -281,6 +321,7 @@
+   if (!config)
+     config = {};
+   config.resolution = resolution;
++  config.dolphin_scale = 0; // Legacy overload explicitly changes the internal resolution.
+   config.show_fps_in_title = show_fps_in_title;
+   config.controller = controller;
+   config.controllers.clear();
+--- a/tools/frontend_config.hpp
++++ b/tools/frontend_config.hpp
+@@ -26,6 +26,8 @@
+   std::vector<std::string> controllers;
+   bool show_fps_in_title = true;
+   bool fullscreen = false;
++  int output_width = 0;
++  int output_height = 0;
+   std::string netplay_nickname = "Player";
+   std::string netplay_address = "127.0.0.1";
+   std::uint16_t netplay_port = 2626;
+--- a/tools/moderngekko_launcher.cpp
++++ b/tools/moderngekko_launcher.cpp
+@@ -504,6 +504,7 @@
+ {
+   bool use_wayland = false;
+   std::optional<fs::path> extract_only;
++  std::optional<fs::path> user_directory_override;
+   for (int i = 1; i < argc; ++i)
+   {
+     if (std::string_view(argv[i]) == "-X11" || std::string_view(argv[i]) == "--x11")
+@@ -512,9 +513,11 @@
+       use_wayland = true;
+     else if (std::string_view(argv[i]) == "--extract" && i + 1 < argc)
+       extract_only = argv[++i];
+-  }
+-
+-  const fs::path user_directory = DefaultUserDirectory();
++    else if (std::string_view(argv[i]) == "--user-dir" && i + 1 < argc)
++      user_directory_override = fs::u8path(argv[++i]);
++  }
++
++  const fs::path user_directory = user_directory_override.value_or(DefaultUserDirectory());
+   const fs::path release_directory = ExecutableDirectory(argv[0]);
+   if (extract_only)
+   {
+@@ -924,7 +927,7 @@
+     }
+     ImGui::Spacing();
+     const bool previous_fullscreen = fullscreen;
+-    if (ImGui::Checkbox("Start in fullscreen", &fullscreen))
++    if (ImGui::Checkbox("Start in borderless fullscreen", &fullscreen))
+     {
+       config.fullscreen = fullscreen;
+       config.resolution = resolutions[resolution_index].text;
+@@ -940,13 +943,16 @@
+       }
+     }
+     ImGui::Spacing();
+-    ImGui::TextUnformatted("Internal resolution (Dolphin EFB upscale)");
+-    if (ImGui::BeginCombo("##resolution", resolutions[resolution_index].text))
++    ImGui::TextDisabled("Alt+Enter toggles fullscreen while playing.");
++    ImGui::TextUnformatted("Internal render scale");
++    const std::string scale_preview = std::to_string(resolutions[resolution_index].dolphin_scale) + "x native";
++    if (ImGui::BeginCombo("##resolution", scale_preview.c_str()))
+     {
+       for (std::size_t i = 0; i < resolutions.size(); ++i)
+       {
+         const bool selected = resolution_index == static_cast<int>(i);
+-        if (ImGui::Selectable(resolutions[i].text, selected))
++        const std::string scale_label = std::to_string(resolutions[i].dolphin_scale) + "x native";
++        if (ImGui::Selectable(scale_label.c_str(), selected))
+         {
+           std::string error;
+           if (moderngekko::frontend::SaveConfig(user_directory, resolutions[i].text,
+@@ -954,6 +960,7 @@
+           {
+             resolution_index = static_cast<int>(i);
+             config.resolution = resolutions[i].text;
++            config.dolphin_scale = resolutions[i].dolphin_scale;
+           }
+           else
+           {
+@@ -964,6 +971,34 @@
+       }
+       ImGui::EndCombo();
+     }
++    ImGui::TextUnformatted("Window output size");
++    const std::string output_preview = config.output_width == 0 ? "Remember window size" :
++        std::to_string(config.output_width) + "x" + std::to_string(config.output_height);
++    if (ImGui::BeginCombo("##output_size", output_preview.c_str()))
++    {
++      struct OutputSize { const char* label; int width; int height; };
++      constexpr OutputSize sizes[] = {{"Remember window size", 0, 0}, {"1280x720", 1280, 720},
++          {"1920x1080", 1920, 1080}, {"2560x1440", 2560, 1440}, {"3840x2160", 3840, 2160}};
++      for (const auto& size : sizes)
++      {
++        if (ImGui::Selectable(size.label, config.output_width == size.width && config.output_height == size.height))
++        {
++          auto updated = config;
++          updated.output_width = size.width;
++          updated.output_height = size.height;
++          std::string error;
++          if (moderngekko::frontend::SaveConfig(user_directory, updated, &error))
++            config = std::move(updated);
++          else
++          {
++            std::lock_guard lock(dialog.mutex);
++            dialog.error = std::move(error);
++          }
++        }
++      }
++      ImGui::EndCombo();
++    }
++    ImGui::TextDisabled("Fullscreen uses the monitor size.");
+     const bool previous_show_fps_in_title = show_fps_in_title;
+     if (ImGui::Checkbox("Show FPS in window title", &show_fps_in_title))
+     {
+@@ -1038,7 +1073,7 @@
+       if (ImGui::Button("Browse for ISO / WBFS / RVZ"))
+       {
+         static constexpr SDL_DialogFileFilter filters[] = {
+-            {"Disc images", "iso;wbfs;rvz"},
++            {"Disc images", "iso;gcm;wbfs;rvz"},
+             {"ISO", "iso"},
+             {"WBFS", "wbfs"},
+             {"RVZ", "rvz"}};
+--- a/tools/moderngekko_run.cpp
++++ b/tools/moderngekko_run.cpp
+@@ -246,6 +246,8 @@
+     return 2;
+   }
+   config.graphics.internal_resolution_scale = frontend_config.dolphin_scale;
++  config.graphics.output_width = frontend_config.output_width;
++  config.graphics.output_height = frontend_config.output_height;
+   if (config.graphics.backend.empty())
+     config.graphics.backend = frontend_config.graphics_backend;
+   config.fullscreen = frontend_config.fullscreen;

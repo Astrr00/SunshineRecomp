@@ -135,6 +135,22 @@ function Add-Patches {
             File = 'recompcore-abi-gaps.patch'
             Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
         }
+        @{
+            File = 'moderngekko-fifo-automation.patch'
+            Target = Join-Path $RefRoot 'ModernGekko'
+        }
+        @{
+            File = 'recompcore-savestate-layout.patch'
+            Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
+        }
+        @{
+            File = 'recompcore-win32-display.patch'
+            Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
+        }
+        @{
+            File = 'moderngekko-display-settings.patch'
+            Target = Join-Path $RefRoot 'ModernGekko'
+        }
     )
 
     foreach ($entry in $patches) {

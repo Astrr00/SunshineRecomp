@@ -7,6 +7,56 @@ Hier steht nur, was tatsächlich ausgeführt und beobachtet wurde. Was nicht
 
 ## Kurzfassung
 
+**2026-09-10:** [08-WINDOWS-ROM-CONTROLLER.md](08-WINDOWS-ROM-CONTROLLER.md).
+Direkter RVZ-Import im Launcher: 179 Spieldateien bytegleich. Frisch importierte
+Daten starten ohne Savestate mit dem vorhandenen statischen Modul, Bild und
+29,96 FPS, Exit 0. Der vollständige Anwenderablauf „ROM auswählen, automatische
+Einrichtung, spielen“ und umfassende Controller-Belegung fehlen noch.
+
+**Aktuelle Anzeige-Fortsetzung:** [07-ANZEIGE.md](07-ANZEIGE.md).
+`internal_scale` und `output_resolution` sind getrennt. Fensterinhalt und
+Ausgabe-PNG bei 1280x720 und 1920x1080 gemessen; randloses Vollbild exakt
+1920x1080 mit Rückkehr zur ursprünglichen Fenstergröße. Vier Profile in v6
+beendeten sich nach den Wechseln regulär (Exit 0). Launcher gebaut, vier
+Testprogramme bestanden. HiDPI/Mehrmonitor, Launcher-Bedienung und vollständige
+Grafikabnahme fehlen weiterhin. Details einschließlich korrigierter eigener
+Fehler und vorheriger gescheiterter Tests in Dokument 07.
+
+**Neuester Stand:** [06-ERSTER-SHINE.md](06-ERSTER-SHINE.md). Der erste Boss
+ist besiegt (HP 3 → 2 → 1 → 0), der Shine eingesammelt und regulär gespeichert.
+Ein vollständiger Neustart ohne Savestate zeigt Slot A mit **1 Shine**;
+die anschließende Handlung startet. Damit ist früher Story-Fortschritt über
+Save/Load belegt. Die übrigen Modernisierungen und vollständige Spielabnahme
+bleiben offen. Ältere Hinweise auf den ungeprüften ersten Shine sind überholt.
+
+**Neuester Stand:** [05-FIFO-UND-FLUDD.md](05-FIFO-UND-FLUDD.md): FLUDD im Spiel
+aufgenommen, Wasserstrahl/HUD, sichtbarer Reinigungs-/Münz-Effekt und analoge
+R-Unterscheidung (0 versus 542,793 Einheiten Bewegung bei gleichem Stick)
+geprüft. Kein vollständiger Grafik- oder Controllerabschluss. FIFO-Diagnose
+implementiert und getestet; Software-Renderer zeigt dieselben auffälligen
+Schleimanteile, daher keine eindeutige GPU-Fehlerklassifizierung. Normales Save
+ändert die Test-GCI; der gespeicherte Slot wurde nach Neustart ohne Savestate
+erkannt und bis ins Spiel gestartet. Story-Fortschritt mit Shines bleibt
+ungeprüft. Aktueller Lauf pausiert unter `build/gameplay-verification/auto/`.
+
+**Neueste Diagnose:** [04-GRAFIKDIAGNOSE.md](04-GRAFIKDIAGNOSE.md) dokumentiert
+die CPU-/Renderer-/Sampling-Vergleiche. Kein Grafikfix freigegeben: Ein
+scheinbar sauberes Savestate-Bild verlor einen Spieleffekt; die neu aufgebaute
+Szene zeigt die Artefakte weiterhin. Der neue Render-Probe-Runner wurde mit
+PNG, Manifest und regulärem Exit 0 ausgeführt.
+
+**Aktualisierung Widescreen, 2026-09-09:** Der spielseitige GMSE01-Gecko-Code
+ist mit 13/13 direkten Schreibpatches und 12/12 injizierten Nutzcodeblöcken im
+RAM verifiziert. Die Dateiauswahl wurde überwunden; Mario läuft am Delfino
+Airstrip, Kameradrehung, Peach-Dialog und Pause-Menü sind mit Bildern belegt.
+Ein ungepatchter Kaltstart dient als gültige 4:3-Referenz und bestätigt im
+Vergleich zusätzliche horizontale Sicht. Der generische Widescreen-Hack blieb
+aus. **Keine vollständige Abnahme:** Filme, volle HUD-Abdeckung, Effekte,
+systematisches Culling und Ultrawide bleiben offen. Details und lokale
+Bildpfade in [03-WIDESCREEN.md](03-WIDESCREEN.md). Die folgenden älteren
+Meilensteine dokumentieren den Verlauf; ihre offenen Punkte sind teilweise
+durch diesen Nachtrag und die späteren Abschnitte überholt.
+
 **Das Spiel startet und rendert unter Windows.** Der statisch rekompilierte
 Spielcode wird geladen, läuft mit stabilen 30,0 FPS und zeichnet die
 Eröffnungssequenz. Belegt durch Fenstertitel-Messung und einen über das

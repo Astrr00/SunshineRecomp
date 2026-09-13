@@ -3,6 +3,63 @@
 Stand: 2026-09-09. Dieses Dokument ist die vollständige Übergabe. Es setzt kein
 Vorwissen aus der bisherigen Sitzung voraus.
 
+**Fortsetzung vom 2026-09-10:** [08-WINDOWS-ROM-CONTROLLER.md](08-WINDOWS-ROM-CONTROLLER.md).
+Auftraggeber präzisiert: native Windows-Anwendung, alle Controller, spielbar
+durch Auswahl einer eigenen ROM. Launcher ist auf GMSE01/DOL-Prüfsumme
+konfiguriert, direkter RVZ-Import geprüft (179 Spieldateien identisch).
+Frisch importiertes Spiel bootet mit dem vorhandenen statischen Modul ohne
+Savestate (Bild, 29,96 FPS, Exit 0). Automatischer Modulbau nach ROM-Auswahl
+und breite Controller-Belegung sind noch offen und als Nächstes zu integrieren.
+Fehlende Startverzeichnisse behoben: frisches Profil schreibt 17 MB Shader-Cache,
+Bild/Vollbild/Stop geprüft. Der frühere FST-Rename-Fehler bleibt ursächlich offen.
+
+**Neueste Fortsetzung:** [07-ANZEIGE.md](07-ANZEIGE.md). Interner Faktor und
+Fenstergröße sind separat konfigurierbar; Win32-Vollbildwechsel und Rückkehr
+zur Fenstergröße wurden am Spiel vermessen. Vier Profile in
+`build/display-verification-v6/` endeten regulär mit Exit 0. Ein beim Test
+eingeführter Hänger wurde durch Verlegung der globalen Konfigurationsspeicherung
+nach Core-Shutdown beseitigt; frühere v2–v5-Läufe sind keine erfolgreichen
+Shutdown-Tests. Launcher gebaut, aber noch nicht visuell abgenommen. Neue
+Patches sind im Bootstrap eingebunden und rekonstruieren den geänderten
+Quellcode nachweislich. Die übrigen Anforderungen bleiben offen.
+
+**Nachtrag zur Widescreen-Sitzung vom selben Tag:** Der spielseitige Gecko-Code
+ist aktiviert und im RAM vollständig nachgewiesen. Dateiauswahl, Gameplay am
+Delfino Airstrip, Kameradrehung, Echtzeitdialog und Pause wurden mit Bildern
+geprüft. Ein Kaltstart-Vergleich bestätigt zusätzliche horizontale Sicht bei
+weitgehend unveränderten Proportionen. Anforderung 3 ist trotzdem nicht fertig:
+Filme behalten Balken/erscheinen gestreckt; die vollständige HUD-, Effekt- und
+Culling-Prüfung sowie Ultrawide fehlen. Aktuelle Belege, Konfiguration,
+Testprofile und Grenzen: [03-WIDESCREEN.md](03-WIDESCREEN.md).
+Die nachstehenden älteren „nicht verifiziert“-Angaben zum Gameplay und zur
+Dateiauswahl sind damit überholt; Ton und reguläres Fortschrittsladen bleiben offen.
+
+**Aktuellste Fortsetzung:** [06-ERSTER-SHINE.md](06-ERSTER-SHINE.md).
+Boss besiegt, erster Shine eingesammelt, regulär gespeichert und nach
+vollständigem Neustart in Slot A als 1 Shine wiedergefunden. Der erfolgreiche
+Durchlauf enthielt keinen Savestate-Rücksprung. Ein vorheriger Save-Konflikt
+entstand beim Mischen eines älteren Savestates mit einer neueren GCI und
+wurde nicht durch einen Spieleingriff umgangen. Aktueller Lauf:
+`build/one-shine-reload/auto/`, **pausiert in Delfino Plaza** nach regulärem
+Laden; Bewegung und Zustandsleser dort geprüft. Ein gepaarter Diagnose-
+Checkpoint liegt unter `build/one-shine-reload/checkpoint/`.
+R-Dauerbetätigung zeigte ein noch ungeklärtes Verbrauchsplateau; siehe die
+Messwerte in Dokument 06. Die Details der vorangegangenen Instrumentierung:
+[05-FIFO-UND-FLUDD.md](05-FIFO-UND-FLUDD.md).
+FIFO-Aufnahme ist implementiert, gebaut und getestet. Software-FIFO-Wiedergabe
+zeigt dieselben auffälligen Schleimanteile; deren eindeutige Einordnung als
+Grafikfehler war voreilig. FLUDD wurde im Spiel aufgenommen; Spritzen,
+sichtbare Reinigung/Belohnung und der Unterschied zwischen halbem/vollem R
+sind geprüft. Reguläres Save hat die Test-GCI geändert; der Slot wurde nach
+Neustart ohne Savestate erkannt und gestartet. Story-Fortschritt über den
+ersten Shine hinaus bleibt ungeprüft. Fortsetzung am pausierten Lauf unter
+`build/gameplay-verification/auto/`. Die älteren Diagnoseversuche stehen in
+[04-GRAFIKDIAGNOSE.md](04-GRAFIKDIAGNOSE.md).
+Die Schleim-/NPC-Artefakte wurden über CPU, Backend, Auflösung und einzelne
+Genauigkeitsschalter verglichen. Ein scheinbarer Sampling-Fix wurde beim
+Neuaufbau der Spielszene widerlegt und **nicht übernommen**. Ein reproduzierbarer
+Runner liegt unter `scripts/render-probe.py`. Grafikfehler weiter offen.
+
 ---
 
 ## 1. Auftrag
@@ -259,6 +316,10 @@ Weitere Befehle: `pad`, `clear_pad`, `pause`, `resume`, `save_state`,
 `load_state`, `read_memory`, `write_memory`, `stop`. Pad-Felder unter anderem
 `a b x y z start l r l_analog r_analog main_x main_y c_x c_y dpad_*`.
 
+Ergänzt und am Spiel geprüft: `record_fifo` mit `frames=1..120` und
+`path=<lokale.dff>`; benötigt einen laufenden Core. Siehe Abschnitt zur
+FIFO-Diagnose in `05-FIFO-UND-FLUDD.md`.
+
 `l_analog`/`r_analog` sind für **Anforderung 7** zentral: Sunshine unterscheidet
 die halb und ganz gedrückte Schultertaste.
 
@@ -279,11 +340,11 @@ der eine Geisterkopie der Szene erzeugt.
 
 **Der vielversprechende Hebel:** Dolphin liefert
 `ref/ModernGekko/vendor/dolphin/Data/Sys/GameSettings/GMSE01.ini` mit
-spielseitigen Codes für genau diese Revision. Der Abschnitt `[Gecko]` beginnt bei
-Zeile 96 und enthält **zwei** Einträge mit dem Titel `$Widescreen` (Zeile 118,
-einer davon gamemasterplc zugeschrieben, und Zeile 188 im Abschnitt
-`[Gecko_RetroAchievements_Verified]`). Sie patchen Gleitkommawerte an festen
-GMSE01-Adressen, also die Projektion im Spiel selbst statt im Emulator.
+spielseitigem Code für genau diese Revision. Unter `[Gecko]` steht ein
+`$Widescreen [gamemasterplc]` (Zeile 118). Der zweite Name in Zeile 188 unter
+`[Gecko_RetroAchievements_Verified]` ist nur eine Freigabemarkierung. Der Code
+enthält 13 direkte Schreibpatches und zwölf Code-Injektionen, verändert also
+Daten und Instruktionen im Spiel selbst.
 
 Aufgaben:
 

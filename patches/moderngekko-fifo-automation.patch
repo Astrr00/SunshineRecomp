@@ -1,0 +1,167 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index fa2503d..0c8969a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -91,9 +91,10 @@ if(MODERNGEKKO_FRONTEND_SDK)
+ endif()
+ 
+ if(MODERNGEKKO_ENABLE_DOLPHIN_RUNTIME)
++    option(MODERNGEKKO_ENABLE_FIFO_REPLAY "Build DolphinNoGUI for local FIFO diagnostics" OFF)
+     set(MODERNGEKKO_ENABLE_IMGUI_LAUNCHER ON CACHE BOOL "" FORCE)
+     set(ENABLE_QT OFF CACHE BOOL "" FORCE)
+-    set(ENABLE_NOGUI OFF CACHE BOOL "" FORCE)
++    set(ENABLE_NOGUI ${MODERNGEKKO_ENABLE_FIFO_REPLAY} CACHE BOOL "" FORCE)
+     set(ENABLE_CLI_TOOL ${MODERNGEKKO_ENABLE_DISC_TOOL} CACHE BOOL "" FORCE)
+     set(ENABLE_TESTS ${MODERNGEKKO_ENABLE_DOLPHIN_TESTS} CACHE BOOL "" FORCE)
+     set(ENABLE_AUTOUPDATE OFF CACHE BOOL "" FORCE)
+diff --git a/src/runtime/dolphin_runtime.cpp b/src/runtime/dolphin_runtime.cpp
+index f9b5405..1915747 100644
+--- a/src/runtime/dolphin_runtime.cpp
++++ b/src/runtime/dolphin_runtime.cpp
+@@ -9,6 +9,7 @@
+ #include "Core/Config/GraphicsSettings.h"
+ #include "Core/Config/MainSettings.h"
+ #include "Core/Core.h"
++#include "Core/FifoPlayer/FifoRecorder.h"
+ #include "Core/HW/GBACore.h"
+ #include "Core/HW/Memmap.h"
+ #include "Core/Host.h"
+@@ -42,6 +43,7 @@
+ #include <fstream>
+ #include <fmt/format.h>
+ #include <mutex>
++#include <memory>
+ #include <stop_token>
+ #include <thread>
+ #include <utility>
+@@ -335,6 +337,37 @@ std::optional<RuntimeError> ApplyAutomationCommand(Runtime& runtime,
+   case automation::CommandType::Screenshot:
+     SaveAutomationScreenshot(NormalizeScreenshotPath(command.path));
+     break;
++  case automation::CommandType::RecordFifo:
++  {
++    if (Core::GetState(system) != Core::State::Running)
++      return RuntimeError{RuntimeErrorCode::InvalidState, "record_fifo requires a running core"};
++    auto& recorder = system.GetFifoRecorder();
++    if (recorder.IsRecording())
++      return RuntimeError{RuntimeErrorCode::InvalidState, "a FIFO recording is already active"};
++    std::filesystem::create_directories(command.path.parent_path());
++    // Save on the recorder's completion callback, while its file is stable.
++    // Shared ownership keeps the callback safe if shutdown interrupts this wait.
++    const auto result = std::make_shared<std::atomic<int>>(0);
++    recorder.StartRecording(static_cast<s32>(command.frames),
++                            [result, path = command.path.string(), &recorder] {
++      const auto* file = recorder.GetRecordedFile();
++      const bool saved = file && recorder.GetRecordedFile()->Save(path);
++      result->store(saved ? 1 : -1, std::memory_order_release);
++    });
++    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
++    while (result->load(std::memory_order_acquire) == 0 && !stop_token.stop_requested() &&
++           std::chrono::steady_clock::now() < deadline)
++      std::this_thread::sleep_for(std::chrono::milliseconds(5));
++    const int outcome = result->load(std::memory_order_acquire);
++    if (outcome != 1)
++    {
++      recorder.StopRecording();
++      return RuntimeError{RuntimeErrorCode::InvalidState,
++                          outcome == -1 ? "could not save FIFO recording" :
++                          "FIFO recording interrupted or timed out; a partial file may follow"};
++    }
++    break;
++  }
+   case automation::CommandType::ReadMemory:
+     if (auto error = ReadAutomationMemory(command.path, command.address, command.size))
+       return error;
+@@ -360,6 +393,7 @@ bool AutomationCommandNeedsReadyCore(automation::CommandType type)
+   case automation::CommandType::SaveState:
+   case automation::CommandType::LoadState:
+   case automation::CommandType::Screenshot:
++  case automation::CommandType::RecordFifo:
+   case automation::CommandType::ReadMemory:
+   case automation::CommandType::WriteMemory:
+   case automation::CommandType::PadFrames:
+diff --git a/tests/automation_protocol_test.cpp b/tests/automation_protocol_test.cpp
+index 812f449..fb64f61 100644
+--- a/tests/automation_protocol_test.cpp
++++ b/tests/automation_protocol_test.cpp
+@@ -180,6 +180,28 @@ int main()
+     return 14;
+   }
+ 
++  for (const auto& value : {"0", "121", "garbage"})
++  {
++    const auto file = commands / "bad_fifo.txt";
++    { std::ofstream out(file); out << "command=record_fifo\npath=frame.dff\nframes=" << value << '\n'; }
++    error.clear();
++    if (automation::ParseCommandFile(file, &command, &error))
++      return 15;
++  }
++  {
++    const auto file = commands / "fifo.txt";
++    { std::ofstream out(file); out << "command=record_fifo\npath=frame.dff\nframes=1\n"; }
++    if (!automation::ParseCommandFile(file, &command, &error) ||
++        command.type != automation::CommandType::RecordFifo || command.frames != 1 ||
++        command.path != "frame.dff")
++      return 16;
++  }
++  {
++    const auto file = commands / "missing_fifo_path.txt";
++    { std::ofstream out(file); out << "command=record_fifo\nframes=1\n"; }
++    if (automation::ParseCommandFile(file, &command, &error))
++      return 17;
++  }
+   std::error_code ec;
+   std::filesystem::remove_all(root, ec);
+   return 0;
+diff --git a/tools/automation_protocol.cpp b/tools/automation_protocol.cpp
+index 25f4167..1a069dc 100644
+--- a/tools/automation_protocol.cpp
++++ b/tools/automation_protocol.cpp
+@@ -169,6 +169,8 @@ std::optional<CommandType> ParseCommandType(std::string_view value)
+     return CommandType::LoadState;
+   if (text == "screenshot")
+     return CommandType::Screenshot;
++  if (text == "record_fifo")
++    return CommandType::RecordFifo;
+   if (text == "read_memory")
+     return CommandType::ReadMemory;
+   if (text == "write_memory")
+@@ -480,6 +482,7 @@ bool ParseCommandFile(const std::filesystem::path& path, Command* command, std::
+   case CommandType::SaveState:
+   case CommandType::LoadState:
+   case CommandType::Screenshot:
++  case CommandType::RecordFifo:
+   {
+     const auto path_it = values.find("path");
+     if (path_it == values.end() || Trim(path_it->second).empty())
+@@ -489,6 +492,18 @@ bool ParseCommandFile(const std::filesystem::path& path, Command* command, std::
+       return false;
+     }
+     parsed.path = Trim(path_it->second);
++    if (*type == CommandType::RecordFifo)
++    {
++      const auto frames_it = values.find("frames");
++      const auto frames = frames_it == values.end() ? std::nullopt : ParseUnsigned(frames_it->second);
++      if (!frames || *frames == 0 || *frames > 120)
++      {
++        if (error)
++          *error = "record_fifo commands require frames=1..120";
++        return false;
++      }
++      parsed.frames = *frames;
++    }
+     break;
+   }
+   case CommandType::ReadMemory:
+diff --git a/tools/automation_protocol.hpp b/tools/automation_protocol.hpp
+index 2396f01..0a30a5c 100644
+--- a/tools/automation_protocol.hpp
++++ b/tools/automation_protocol.hpp
+@@ -21,6 +21,7 @@ enum class CommandType
+   SaveState,
+   LoadState,
+   Screenshot,
++  RecordFifo,
+   ReadMemory,
+   WriteMemory,
+   Stop,

@@ -186,6 +186,10 @@ if ($Target -in @('moderngekko', 'all')) {
     $options = @(
         "-DCMAKE_BUILD_TYPE=$Config",
         '-DMODERNGEKKO_GAMECUBE_CONTROLLERS=ON',
+        '-DMODERNGEKKO_FRONTEND_NAME=SunshineRecomp',
+        '-DMODERNGEKKO_USER_DIRECTORY_NAME=SunshineRecomp',
+        '-DMODERNGEKKO_REQUIRED_DISC_ID=GMSE01',
+        '-DMODERNGEKKO_REQUIRED_DOL_SHA256=13934c863d649b1ddca1ca4d7748f49d28a571685cbee5fb1542545c32869955',
         '-DMODERNGEKKO_ENABLE_DISC_TOOL=ON',
         "-DCMAKE_CXX_FLAGS=`"$silence`""
     ) -join ' '

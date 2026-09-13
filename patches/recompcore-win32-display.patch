@@ -1,0 +1,271 @@
+--- a/Source/Core/DolphinNoGUI/Platform.h
++++ b/Source/Core/DolphinNoGUI/Platform.h
+@@ -4,6 +4,7 @@
+ #pragma once
+ 
+ #include <memory>
++#include <atomic>
+ #include <string>
+ 
+ #include "Common/Flag.h"
+@@ -22,6 +23,7 @@
+   virtual void SetTitle(const std::string& title);
+   virtual void MainLoop() = 0;
+   virtual void SaveWindowGeometry() {}
++  virtual bool RequestFullscreenToggle() { return false; }
+ 
+   virtual WindowSystemInfo GetWindowSystemInfo() const = 0;
+ 
+@@ -65,6 +67,6 @@
+   Common::Flag m_save_state_requested{false};
+   Common::Flag m_load_state_requested{false};
+ 
+-  bool m_window_focus = true;  // Should be made atomic if actually implemented
+-  bool m_window_fullscreen = false;
++  std::atomic<bool> m_window_focus{true};
++  std::atomic<bool> m_window_fullscreen{false};
+ };
+--- a/Source/Core/DolphinNoGUI/PlatformWin32.cpp
++++ b/Source/Core/DolphinNoGUI/PlatformWin32.cpp
+@@ -11,12 +11,23 @@
+ #include <Windows.h>
+ #include <climits>
+ #include <dwmapi.h>
++#include <mutex>
++#include <optional>
+ 
+ #include "VideoCommon/Present.h"
+ #include "resource.h"
+ 
+ namespace
+ {
++class PhysicalPixelScope
++{
++public:
++  PhysicalPixelScope() : m_previous(SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {}
++  ~PhysicalPixelScope() { if (m_previous) SetThreadDpiAwarenessContext(m_previous); }
++private:
++  DPI_AWARENESS_CONTEXT m_previous;
++};
++
+ class PlatformWin32 final : public Platform
+ {
+ public:
+@@ -25,6 +36,8 @@
+   bool Init() override;
+   void SetTitle(const std::string& string) override;
+   void MainLoop() override;
++  void SaveWindowGeometry() override;
++  bool RequestFullscreenToggle() override;
+ 
+   WindowSystemInfo GetWindowSystemInfo() const override;
+ 
+@@ -37,8 +50,16 @@
+   bool CreateRenderWindow();
+   void UpdateWindowPosition();
+   void ProcessEvents();
++  void SetFullscreen(bool enabled);
++  void SetClientSize(int width, int height);
++  static constexpr UINT TOGGLE_FULLSCREEN = WM_APP + 17;
+ 
+   HWND m_hwnd{};
++  std::mutex m_title_mutex;
++  std::optional<std::wstring> m_pending_title;
++  WINDOWPLACEMENT m_windowed_placement{sizeof(WINDOWPLACEMENT)};
++  LONG_PTR m_windowed_style = WS_OVERLAPPEDWINDOW;
++  LONG_PTR m_windowed_ex_style = WS_EX_CLIENTEDGE;
+ 
+   int m_window_x = Config::Get(Config::MAIN_RENDER_WINDOW_XPOS);
+   int m_window_y = Config::Get(Config::MAIN_RENDER_WINDOW_YPOS);
+@@ -68,7 +89,7 @@
+   wc.lpszClassName = WINDOW_CLASS_NAME;
+   wc.hIconSm = LoadIcon(nullptr, IDI_ICON1);
+ 
+-  if (!RegisterClassEx(&wc))
++  if (!RegisterClassEx(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+   {
+     MessageBox(nullptr, _T("Window registration failed."), _T("Error"), MB_ICONERROR | MB_OK);
+     return false;
+@@ -90,20 +111,23 @@
+   }
+ 
+   ShowWindow(m_hwnd, SW_SHOW);
++  SetClientSize(m_window_width, m_window_height);
+   UpdateWindow(m_hwnd);
+   return true;
+ }
+ 
+ bool PlatformWin32::Init()
+ {
++  // The render surface is specified in physical pixels, independently of UI DPI scaling.
++  const auto previous_dpi = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+   if (!RegisterRenderWindowClass() || !CreateRenderWindow())
++  {
++    if (previous_dpi) SetThreadDpiAwarenessContext(previous_dpi);
+     return false;
+-
+-  // TODO: Enter fullscreen if enabled.
+-  if (Config::Get(Config::MAIN_FULLSCREEN))
+-  {
+-    ProcessEvents();
+-  }
++  }
++  if (previous_dpi) SetThreadDpiAwarenessContext(previous_dpi);
++
++  SetFullscreen(Config::Get(Config::MAIN_FULLSCREEN));
+ 
+   if (Config::Get(Config::MAIN_DISABLE_SCREENSAVER))
+     SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
+@@ -114,7 +138,10 @@
+ 
+ void PlatformWin32::SetTitle(const std::string& string)
+ {
+-  SetWindowTextW(m_hwnd, UTF8ToWString(string).c_str());
++  // SetWindowText sends a synchronous message. Never block the title worker
++  // on the window thread, which joins that worker during shutdown.
++  std::lock_guard lock(m_title_mutex);
++  m_pending_title = UTF8ToWString(string);
+ }
+ 
+ void PlatformWin32::MainLoop()
+@@ -124,6 +151,12 @@
+     UpdateRunningFlag();
+     Core::HostDispatchJobs(Core::System::GetInstance());
+     ProcessEvents();
++    std::optional<std::wstring> title;
++    {
++      std::lock_guard lock(m_title_mutex);
++      title.swap(m_pending_title);
++    }
++    if (title) SetWindowTextW(m_hwnd, title->c_str());
+     UpdateWindowPosition();
+ 
+     // TODO: Is this sleep appropriate?
+@@ -142,6 +175,7 @@
+ 
+ void PlatformWin32::UpdateWindowPosition()
+ {
++  const PhysicalPixelScope dpi_scope;
+   if (m_window_fullscreen)
+     return;
+ 
+@@ -151,8 +185,67 @@
+ 
+   m_window_x = rc.left;
+   m_window_y = rc.top;
+-  m_window_width = rc.right - rc.left;
+-  m_window_height = rc.bottom - rc.top;
++  if (!IsIconic(m_hwnd) && GetClientRect(m_hwnd, &rc))
++  {
++    m_window_width = rc.right - rc.left;
++    m_window_height = rc.bottom - rc.top;
++  }
++}
++
++void PlatformWin32::SetClientSize(int width, int height)
++{
++  const PhysicalPixelScope dpi_scope;
++  RECT rect{0, 0, width, height};
++  AdjustWindowRectExForDpi(&rect, static_cast<DWORD>(GetWindowLongPtr(m_hwnd, GWL_STYLE)),
++                          FALSE, static_cast<DWORD>(GetWindowLongPtr(m_hwnd, GWL_EXSTYLE)),
++                          GetDpiForWindow(m_hwnd));
++  SetWindowPos(m_hwnd, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
++               SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
++}
++
++void PlatformWin32::SetFullscreen(bool enabled)
++{
++  const PhysicalPixelScope dpi_scope;
++  if (enabled == m_window_fullscreen) return;
++  if (enabled)
++  {
++    UpdateWindowPosition();
++    GetWindowPlacement(m_hwnd, &m_windowed_placement);
++    m_windowed_style = GetWindowLongPtr(m_hwnd, GWL_STYLE);
++    m_windowed_ex_style = GetWindowLongPtr(m_hwnd, GWL_EXSTYLE);
++    MONITORINFO monitor{sizeof(MONITORINFO)};
++    if (!GetMonitorInfo(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), &monitor)) return;
++    m_window_fullscreen = true;
++    SetWindowLongPtr(m_hwnd, GWL_STYLE, (m_windowed_style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
++    SetWindowLongPtr(m_hwnd, GWL_EXSTYLE, m_windowed_ex_style & ~WS_EX_CLIENTEDGE);
++    const auto& rect = monitor.rcMonitor;
++    SetWindowPos(m_hwnd, HWND_TOP, rect.left, rect.top, rect.right - rect.left,
++                 rect.bottom - rect.top, SWP_FRAMECHANGED | SWP_NOACTIVATE);
++  }
++  else
++  {
++    m_window_fullscreen = false;
++    SetWindowLongPtr(m_hwnd, GWL_STYLE, m_windowed_style);
++    SetWindowLongPtr(m_hwnd, GWL_EXSTYLE, m_windowed_ex_style);
++    SetWindowPlacement(m_hwnd, &m_windowed_placement);
++    SetWindowPos(m_hwnd, nullptr, 0, 0, 0, 0,
++                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
++  }
++}
++
++bool PlatformWin32::RequestFullscreenToggle()
++{
++  return PostMessage(m_hwnd, TOGGLE_FULLSCREEN, 0, 0) != 0;
++}
++
++void PlatformWin32::SaveWindowGeometry()
++{
++  UpdateWindowPosition();
++  Config::SetBase(Config::MAIN_FULLSCREEN, m_window_fullscreen.load());
++  Config::SetBase(Config::MAIN_RENDER_WINDOW_XPOS, m_window_x);
++  Config::SetBase(Config::MAIN_RENDER_WINDOW_YPOS, m_window_y);
++  Config::SetBase(Config::MAIN_RENDER_WINDOW_WIDTH, m_window_width);
++  Config::SetBase(Config::MAIN_RENDER_WINDOW_HEIGHT, m_window_height);
+ }
+ 
+ void PlatformWin32::ProcessEvents()
+@@ -197,9 +290,47 @@
+   }
+   break;
+ 
++  case WM_GETMINMAXINFO:
++  {
++    // Explicit output sizes may exceed the desktop. Do not silently clamp the
++    // client height to the monitor height minus the title bar.
++    auto* limits = reinterpret_cast<MINMAXINFO*>(lParam);
++    limits->ptMaxTrackSize = {16384, 16384};
++    return 0;
++  }
++
++  case WM_ACTIVATE:
++    if (platform) platform->m_window_focus = LOWORD(wParam) != WA_INACTIVE;
++    break;
++
++  case WM_DPICHANGED:
++    if (platform && !platform->m_window_fullscreen)
++    {
++      const auto* rect = reinterpret_cast<RECT*>(lParam);
++      SetWindowPos(hwnd, nullptr, rect->left, rect->top, 0, 0,
++                   SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
++      platform->SetClientSize(platform->m_window_width, platform->m_window_height);
++    }
++    break;
++
++  case TOGGLE_FULLSCREEN:
++    if (platform) platform->SetFullscreen(!platform->m_window_fullscreen);
++    break;
++
++  case WM_SYSKEYDOWN:
++    if (wParam == VK_RETURN && (lParam & (1LL << 29)) && !(lParam & (1LL << 30)))
++    {
++      if (platform) platform->SetFullscreen(!platform->m_window_fullscreen);
++      return 0;
++    }
++    return DefWindowProc(hwnd, msg, wParam, lParam);
++
+   case WM_KEYDOWN:
+-    if (wParam == VK_ESCAPE)
+-      platform->RequestShutdown();
++    if (platform && wParam == VK_ESCAPE)
++    {
++      if (platform->m_window_fullscreen) platform->SetFullscreen(false);
++      else platform->RequestShutdown();
++    }
+     break;
+ 
+   case WM_CLOSE:
