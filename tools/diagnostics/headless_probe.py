@@ -56,6 +56,12 @@ def main() -> int:
     p.add_argument("--timeout", type=float, default=300)
     p.add_argument("--cheats-ini", type=Path,
                    help="lokale GameSettings/GMSE01.ini mit aktivierten Codes")
+    p.add_argument("--sequence", type=Path,
+                   help="JSON-Liste von pad_frames-Feldern, nach dem Warten "
+                        "abgespielt (wie tests/fixtures/airstrip-camera.json)")
+    p.add_argument("--fifo", metavar="FRAMES",  type=int,
+                   help="nach dem Warten so viele Frames als DFF aufzeichnen "
+                        "(record_fifo aus dem FIFO-Patch, 1 bis 120)")
     args = p.parse_args()
 
     root = args.output.resolve()
@@ -97,6 +103,12 @@ def main() -> int:
             manifest["status_at_start"] = read_status(auto)
             wait_until(proc, lambda: int(read_status(auto)["frame_count"]) >= args.frames,
                        args.timeout, f"warten auf Frame {args.frames}")
+            if args.sequence:
+                steps = json.loads(args.sequence.read_text())
+                for step in steps:
+                    send(auto, "pad_frames",
+                         [f"{key}={value}" for key, value in step.items()], timeout=120)
+                manifest["sequence"] = steps
             for spec in args.read:
                 address, size, name = spec.split(":")
                 address, size = int(address, 0), int(size, 0)
@@ -108,6 +120,15 @@ def main() -> int:
                 if size == 4:
                     entry["u32"] = hex(struct.unpack(">I", data)[0])
                 manifest["reads"][name] = entry
+            if args.fifo:
+                dff = auto / "frames.dff"
+                send(auto, "record_fifo", [f"frames={args.fifo}", f"path={dff}"],
+                     timeout=120)
+                wait_until(proc, lambda: dff.is_file() and dff.stat().st_size > 0,
+                           60, "warten auf die FIFO-Datei")
+                manifest["fifo"] = {"path": str(dff), "frames": args.fifo,
+                                    "bytes": dff.stat().st_size,
+                                    "sha256": hashlib.sha256(dff.read_bytes()).hexdigest()}
             manifest["status_at_end"] = read_status(auto)
         except Exception as exc:  # noqa: BLE001 - alles landet im Manifest
             manifest["error"] = repr(exc)
@@ -121,7 +142,7 @@ def main() -> int:
                     proc.kill()
             manifest["exit_code"] = proc.poll()
             (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    print(json.dumps({k: manifest[k] for k in ("reads", "exit_code")
+    print(json.dumps({k: manifest[k] for k in ("reads", "fifo", "exit_code")
                       if k in manifest} | {"error": manifest.get("error")}, indent=2))
     return 0 if manifest.get("reads") and "error" not in manifest else 1
 

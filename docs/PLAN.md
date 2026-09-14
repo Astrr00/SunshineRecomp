@@ -485,6 +485,10 @@ DPI.
 
 ### WP13 Framerate-Spike (M, zeitlich begrenzt)
 
+> Stand 2026-09-14: Schritte 1 bis 3 gemessen ([11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md)):
+> 100 % Zuordnung, Bewegung in den Matrizen, beide Ladewege sichtbar. Offen:
+> Zwischenbild (Schritt 4) und Kameraschnitt (Schritt 5).
+
 Siehe Abschnitt 5.3. Ergebnis: `docs/10-FRAMERATE-SPIKE.md` mit Go/No-Go und
 gewählter Variante.
 

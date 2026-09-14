@@ -67,7 +67,9 @@ im Bereich, den das Spiel selbst als Code führt (`mCodeStart`…`mCodeEnd`). Vo
 Heap wird er nicht berührt. Er wäre erst betroffen, wenn der Stapel um mehr
 als 61 KB tiefer liefe; dann stünde ohnehin `data14` darunter als Nächstes.
 Ob das im Spielverlauf vorkommt, ist mit einer Tiefstandsmessung über den
-Abnahmelauf zu belegen, nicht hier.
+Abnahmelauf zu belegen. Ein erster Langlauf über 30.000 Frames ohne Eingabe
+kam auf höchstens 12 KB Stapelnutzung ([11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md),
+Nebenbefund).
 
 ## Befund 2: Der Gecko-Weg ist reproduziert, samt SMC-Rückfall
 
