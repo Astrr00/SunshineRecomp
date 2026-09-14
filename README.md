@@ -6,7 +6,8 @@ Recompilation.
 **Status: früh.** Bislang liegen die Machbarkeitsanalyse, der Datenimport und der
 Build des Recompilers vor. Es gibt noch keine spielbare Anwendung. Siehe
 [docs/01-MACHBARKEIT.md](docs/01-MACHBARKEIT.md) für die Architekturentscheidung,
-belegte Grundlagen und die konkret fehlenden Komponenten.
+belegte Grundlagen und die konkret fehlenden Komponenten. Das weitere Vorgehen
+ist in [docs/PLAN.md](docs/PLAN.md) geplant (Stand 2026-09-14).
 
 ## Bauen
 

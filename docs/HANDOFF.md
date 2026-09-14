@@ -3,6 +3,11 @@
 Stand: 2026-09-09. Dieses Dokument ist die vollständige Übergabe. Es setzt kein
 Vorwissen aus der bisherigen Sitzung voraus.
 
+**Plan vom 2026-09-14:** [PLAN.md](PLAN.md) legt Leitentscheidungen,
+Reihenfolge, Arbeitspakete und offene Entscheidungen des Auftraggebers fest.
+Für den Plan wurde nichts weitergeführt; Abschnitt 9 dort listet die neu
+geprüften Fakten (Upstream unverändert, GMSE01-Symbolliste gefunden).
+
 **Fortsetzung vom 2026-09-10:** [08-WINDOWS-ROM-CONTROLLER.md](08-WINDOWS-ROM-CONTROLLER.md).
 Auftraggeber präzisiert: native Windows-Anwendung, alle Controller, spielbar
 durch Auswahl einer eigenen ROM. Launcher ist auf GMSE01/DOL-Prüfsumme
