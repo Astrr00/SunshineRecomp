@@ -382,11 +382,19 @@ class Decoder:
             summary.bytes_decoded = pos
 
 
-def summarize(dff: Dff, snapshots: bool = False) -> list[FrameSummary]:
+def summarize(dff: Dff, snapshots: bool = False,
+              upto: int | None = None, keep: set[int] | None = None) -> list[FrameSummary]:
+    """Zerlegt die Frames 0..upto (alle, wenn None). Mit ``keep`` werden nur
+    fuer die genannten Frames Zeichenbefehle (und Momentaufnahmen) behalten;
+    der Zustand wird trotzdem ueber alle vorherigen Frames gefuehrt."""
     decoder = Decoder(dff, snapshots)
     result = []
-    for frame in dff.frames:
+    last = len(dff.frames) - 1 if upto is None else upto
+    for position, frame in enumerate(dff.frames[:last + 1]):
         summary = FrameSummary()
+        decoder.snapshots = snapshots and (keep is None or position in keep)
         decoder.run(frame, summary)
+        if keep is not None and position not in keep:
+            summary.draws = []
         result.append(summary)
     return result

@@ -103,20 +103,38 @@ def _percentile(values: list[float], share: float) -> float | None:
     return ordered[min(len(ordered) - 1, int(share * len(ordered)))]
 
 
-def cut_verdict(pair: dict, share_floor: float = 0.6, translation_jump: float = 200.0) -> bool:
+def cut_verdict(pair: dict, previous: dict | None = None, share_floor: float = 0.6,
+                hard_jump: float = 1000.0, jump_floor: float = 50.0, jump_ratio: float = 8.0) -> bool:
     """Heuristik fuer einen Schnitt zwischen zwei Frames.
 
-    Ein Schnitt zeigt sich entweder daran, dass sich die Zeichenbefehle nicht
-    mehr zuordnen lassen (anderer Inhalt), oder daran, dass die zugeordneten
-    Befehle geschlossen weit springen (andere Kamera bei gleichem Inhalt: die
-    Positionsmatrizen tragen Sicht mal Modell). Schwellen sind Startwerte
-    fuer die Kalibrierung an Aufzeichnungen, keine Festlegung.
+    Drei Regeln, kalibriert an den Aufzeichnungen (docs/11-FRAMERATE-SPIKE.md):
+
+    1. Weniger als ``share_floor`` der Zeichenbefehle zuordenbar: anderer
+       Inhalt (Filmuebergang 0 %, Titel gegen Dateiauswahl 38 %).
+    2. Median der Verschiebung der zugeordneten Positionsmatrizen ueber
+       ``hard_jump``: gleicher Inhalt, andere Kamera (Titel gegen
+       Dateiauswahl: 1.638). Kameraschwenks in Zwischensequenzen erreichen
+       263 je Frame, darum liegt die Schwelle weit darueber.
+    3. Sprung gegenueber dem Vorpaar: Verschiebung ueber ``jump_floor`` und
+       mehr als ``jump_ratio``-mal so gross wie im Vorpaar. Ein Schwenk
+       waechst stetig (41, 118, 205, 263, 229 ...), ein Schnitt kommt aus dem
+       Stand. Ein abrupt beginnender Schwenk (126 aus dem Stand) wird dabei
+       einmal als Schnitt gewertet: ein ausgelassenes Zwischenbild, kein
+       Geisterbild.
     """
     share = pair.get("matched_share_of_current")
     if share is not None and share < share_floor:
         return True
     median = pair.get("motion_translation_median")
-    return median is not None and median > translation_jump
+    if median is None:
+        return False
+    if median > hard_jump:
+        return True
+    if previous is not None and median > jump_floor:
+        before = previous.get("motion_translation_median")
+        if before is not None and median > jump_ratio * max(before, 0.0):
+            return True
+    return False
 
 
 def analyze(dff: fifo.Dff) -> dict:
@@ -175,7 +193,8 @@ def analyze(dff: fifo.Dff) -> dict:
             "motion_rotation_median": _percentile(rotations, 0.5),
             "motion_rotation_p90": _percentile(rotations, 0.9),
         })
-        report["pairs"][-1]["cut"] = cut_verdict(report["pairs"][-1])
+        report["pairs"][-1]["cut"] = cut_verdict(
+            report["pairs"][-1], report["pairs"][-2] if len(report["pairs"]) > 1 else None)
     return report
 
 

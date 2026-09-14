@@ -106,8 +106,9 @@ def main(argv: list[str] | None = None) -> int:
               f"{f['xf_matrix_loads_indexed_unresolved']}), Projektion {f['projection_loads']}"
               + (", ABGEBROCHEN" if f['stopped_early'] else ""))
     for p in report["pairs"]:
+        share = p["matched_share_of_current"]
         print(f"  Frames {p['frames'][0]}->{p['frames'][1]}: zugeordnet {p['matched']} von "
-              f"{p['draws_current']} ({p['matched_share_of_current']:.1%}); davon Matrix "
+              f"{p['draws_current']} ({'-' if share is None else f'{share:.1%}'}); davon Matrix "
               f"geaendert {p['matched_matrix_changed']}, Matrixindex geaendert "
               f"{p['matched_matrix_index_changed']}, Projektion geaendert "
               f"{p['matched_projection_changed']}, direkte Positionen "

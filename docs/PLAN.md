@@ -485,12 +485,13 @@ DPI.
 
 ### WP13 Framerate-Spike (M, zeitlich begrenzt)
 
-> Stand 2026-09-14: Schritte 1 bis 4 gemessen ([11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md)):
-> 100 % Zuordnung, Bewegung in den Matrizen, beide Ladewege sichtbar; ein
-> synthetisches Zwischenbild wurde gerendert und liegt in der Dateiauswahl
-> bei 92,9 % der geänderten Pixel zwischen den Nachbarframes. Schritt 5:
-> harter Szenenwechsel erkannt, Kameraschnitt in gleicher Szene noch offen,
-> ebenso Spielszenen mit bewegter Kamera.
+> Stand 2026-09-14: alle fünf Schritte gemessen ([11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md)):
+> 96 bis 100 % Zuordnung auch bei bewegter Kamera, Bewegung in den Matrizen,
+> beide Ladewege sichtbar; synthetische Zwischenbilder gerendert (Dateiauswahl
+> 92,9 %, Kameraschwenk 86,8 % der geänderten Pixel zwischen den
+> Nachbarframes, kein sichtbares Artefakt); Filmübergang und harter
+> Szenenwechsel erkannt, Schwenks nicht fälschlich. Go für Variante A auf
+> Messebene; offen: Gegenschnitt in gleicher Szene, gesteuerte Spielszene.
 
 Siehe Abschnitt 5.3. Ergebnis: `docs/11-FRAMERATE-SPIKE.md` mit Go/No-Go und
 gewählter Variante.

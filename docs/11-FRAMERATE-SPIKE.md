@@ -83,14 +83,18 @@ Drei Dinge am Player, die Zeit gekostet haben und für Windows genauso gelten:
 | Vorspannfilm (Frame 1500) | 3 | ein Zeichenbefehl, 430 KB Texturaktualisierung je Frame: THP-Video |
 | Titelbild (nach Start) | 3 | 3D-Szene mit Wasser, Logo orthografisch |
 | Dateiauswahl (Strand, Mario vor den Kisten) | 4 und 120 | 3D-Szene, `gpMarioAddress` = `0x80E9AD44` |
-| Einleitungsfilm nach Spielstart | 6 mal 120 | THP-Video (ein Zeichenbefehl je Frame, 3.625 B), kein 3D |
+| Einleitungsfilm nach Spielstart | rund 1.900 Frames | THP-Video (ein Zeichenbefehl je Frame, 3.625 B), kein 3D |
+| Flugplatz-Zwischensequenz (Mario, Peach, Toadsworth am Flugzeug) | 11 mal 120 | 3D-Szene mit 8.800 bis 9.700 Zeichenbefehlen und 650 bis 670 KB je Frame; Kamera bewegt sich nach jedem Dialogschritt |
 
 Der Spielstart über die Automation brauchte drei Anläufe, weil die
 Dateiauswahl keinen Cursor zeigt: Start am Titel; A überspringt den Titel;
 A öffnet „create a file … in Slot A?", A wählt YES, A bestätigt „File
 created."; danach wählt der Stick (rechts, dann links) eine Kiste, A öffnet
 „START / COPY / ERASE / SCORE", A startet. Die verwendete Folge steht in
-`tests/fixtures/game-start.json`; sie ist nicht minimiert.
+`tests/fixtures/game-start.json`; sie ist nicht minimiert. Danach läuft der
+Einleitungsfilm rund 1.900 Frames; die Zwischensequenz dahinter wartet nach
+jedem Satz auf A. Ein Zeichenbefehl-Zähler auf dem ersten Frame jeder
+Aufzeichnung (1 = Film, 0 = Überblendung, 8.800 = Szene) zeigt, wo man ist.
 
 ## Teil 1: Messwerte je Frame
 
@@ -187,45 +191,106 @@ Interpolation nichts und kann Effekte minimal verändern; ein Interpolator
 sollte unbewegte Matrizen (Differenz null) unangetastet lassen, was hier
 schon so ist, und Effekt-Matrizen erkennbar ausnehmen können.
 
+### Bewegte Kamera: Flugplatz-Zwischensequenz
+
+Der entscheidende Fall. Nach dem ersten Dialogschritt schwenkt die Kamera
+über den Flugplatz (Median der Verschiebung aller Positionsmatrizen 126,
+dann 93 Einheiten je Frame, abklingend). Zwischenbild für die Frames 1→2
+dieses Fensters:
+
+| | Wert |
+|---|---|
+| zugeordnet | 8.813 von 8.817 Zeichenbefehlen (99,95 %) |
+| interpolierte Wörter / XF-Ladungen | 1.861.611 / 147.875 (+8,2 MB) |
+| Prüfung | Signaturen gleich, 0 Wörter neben dem Zwischenwert, B wie im Original |
+| A gegen B | 153.718 Pixel (53,6 %), mittlere Differenz 16,6 |
+| A gegen Zwischenbild | 114.716 Pixel (40,0 %), 10,85 |
+| Zwischenbild gegen B | 116.108 Pixel (40,5 %), 10,99 |
+| geänderte Pixel mit Zwischenbild im Intervall [A, B] | 133.448 von 153.718 (86,8 %) |
+| nur im Zwischenbild geändert | 15.218 (5,3 % des Bildes) |
+
+Die Differenzen zu A und zu B sind gleich groß: Das Zwischenbild liegt in
+der Mitte. Im Bild selbst ist es ein sauberes Zwischenbild des Schwenks:
+Peach, Mario, der hereinlaufende Toadsworth, Flugzeug und Palme stehen
+konsistent zueinander, keine Doppelkonturen. Die Nur-Zwischenbild-Pixel
+verteilen sich über Kanten und die Wolkenschicht am Himmel; bei 53 %
+bewegten Pixeln ist ein Anteil außerhalb des Intervalls durch verdeckte und
+freigelegte Flächen zu erwarten und kein Fehlerbeleg.
+
 ## Teil 2b: Schnitte
 
-Die Schnitt-Heuristik in `spike.py` schlägt an, wenn sich weniger als 60 %
-der Zeichenbefehle zuordnen lassen oder wenn der Median der Verschiebung der
-zugeordneten Positionsmatrizen 200 Einheiten übersteigt (Sicht mal Modell:
-ein Kamerasprung bewegt alle Matrizen). Kalibriert an zwei Extremen:
+Was die Aufzeichnungen an Bewegung zeigen (Median der Verschiebung der
+zugeordneten Positionsmatrizen je Frame-Paar, in Spieleinheiten):
 
-| | Zuordnung | Median Verschiebung | Urteil |
-|---|---|---|---|
-| Dateiauswahl, 119 Paare in Folge | 99,1 bis 100 % | 0,04 bis 0,42 (90 %-Wert höchstens 1,39; Maximum 1,8) | kein Schnitt |
-| Titel gegen Dateiauswahl (harter Szenenwechsel) | 37,6 % der Dateiauswahl-Befehle | 1.638 | Schnitt |
+| Situation | Zuordnung | Verschiebung je Frame |
+|---|---|---|
+| Dateiauswahl, 119 Paare in Folge (Stillstand) | 99,1 bis 100 % | 0,04 bis 0,42 (90 %-Wert höchstens 1,4) |
+| Zwischensequenz, Kamera steht (w15, w16) | 99,5 bis 100 % | höchstens 0,11 |
+| Szenenbeginn nach dem Film: Irisblende und Kameraschwenk (w14, d01) | 94 bis 99 % | 41, 118, 205, 263, 229, 186, 151, 115, 85, 65, 42, 31, 21, 13, 9 |
+| Kameraschwenk nach Dialogschritt (d02) | 100 % | 126, 93, 70, 54, 42, 35, 26, 20, 17, 14, 11, 8 (abrupt aus dem Stand) |
+| Kamerafahrt nach jedem weiteren Dialogschritt (d03 bis d11, identisch) | 96 bis 100 % | 11, 15, 20, 22, 23, 12, 2 |
+| Filmübergang: 0, dann 255, dann 8.561 Zeichenbefehle | 0 %, 2,9 % | nicht bestimmbar |
+| Titel gegen Dateiauswahl (harter Szenenwechsel, zwei Dateien) | 37,6 % der Dateiauswahl-Befehle | 1.638 |
 
-Der Abstand zwischen beiden ist drei Größenordnungen. Was fehlt, ist der
-schwierige Fall: ein Kameraschnitt bei gleichem Inhalt (Zwischensequenz),
-bei dem die Zuordnung hoch bleibt und nur die Verschiebung springt. Die
-sechs Fenster nach dem Spielstart enthielten noch den Einleitungsfilm; die
-Aufzeichnung dahinter läuft (siehe Ergänzung unten, falls vorhanden).
+Daraus die Heuristik in `spike.py` (`cut_verdict`), drei Regeln:
+
+1. **Weniger als 60 % zuordenbar**: anderer Inhalt. Trifft Filmframes (ein
+   Zeichenbefehl), den Filmübergang und den harten Szenenwechsel.
+2. **Verschiebung über 1.000**: gleiche Inhalte, andere Kamera. Trifft den
+   harten Szenenwechsel (1.638); Schwenks erreichen 263.
+3. **Sprung gegenüber dem Vorpaar**: Verschiebung über 50 und mehr als
+   achtmal so groß wie im Vorpaar. Ein Schwenk wächst stetig (41, 118, 205,
+   263: Faktor höchstens 2,9), ein Schnitt kommt aus dem Stand.
+
+Ergebnis über alle 17 aufgezeichneten Fenster der Zwischensequenz (2.040
+Paare): angeschlagen nur bei Filmframes und am Filmübergang; kein
+Kameraschwenk und keine Kamerafahrt wurde als Schnitt gewertet. Die erste
+Fassung mit einer festen Schwelle von 200 hatte drei Schwenkframes falsch
+markiert; die Irisblende am Szenenbeginn (das Bild wächst aus einem
+schwarzen Kreis, während die Kamera schwenkt) zeigt, warum eine reine
+Schwelle nicht reicht.
+
+Zwei Grenzen, beide belegt oder aus den Zahlen ableitbar:
+
+- **Ein abrupt beginnender Schwenk** (d02: 126 aus dem Stand) wird nach Regel
+  3 einmal als Schnitt gewertet, sobald Vorgeschichte vorliegt. Folge: ein
+  ausgelassenes Zwischenbild, ein 30-Hz-Schritt an dieser Stelle, kein
+  Geisterbild. Die umgekehrte Fehlentscheidung (Schnitt nicht erkannt) wäre
+  ein Geisterbild aus zwei Kameras; die Regeln sind bewusst so gewählt.
+- **Ein Kameraschnitt bei gleichem Inhalt und kleiner Distanz** (etwa 300
+  Einheiten, aus einem Schwenk heraus) ist nicht in den Aufzeichnungen und
+  von einem Schwenk mit derselben Verschiebung nicht zu unterscheiden. Der
+  Dialogteil der Flugplatz-Sequenz enthielt keinen solchen Schnitt: Nach
+  jedem A fährt die Kamera, sie springt nicht. Die Aufzeichnung einer
+  Sequenz mit Gegenschnitt (Sprecherwechsel) steht aus.
 
 ## Stand der Spike-Kriterien aus PLAN 5.3
 
 | Kriterium | Stand |
 |---|---|
-| mindestens 90 % Zuordnung in Spielszenen | erfüllt in Titel und Dateiauswahl (100 %); Spielszene mit Kamera in Bewegung noch offen |
-| Zwischenbild plausibel | Dateiauswahl: ja (92,9 % im Intervall, Bewegung halbiert, kein Artefakt). Titel: neutral, Effekt-Restdifferenz |
-| Schnitt erkannt | harter Szenenwechsel ja; Kameraschnitt in gleicher Szene nicht gemessen |
+| mindestens 90 % Zuordnung in Spielszenen | erfüllt: Titel und Dateiauswahl 100 %, Zwischensequenz mit Kamera in Bewegung 96 bis 100 % |
+| Zwischenbild plausibel | ja: Dateiauswahl 92,9 % und Kameraschwenk 86,8 % der geänderten Pixel zwischen A und B, Differenzen zu A und B gleich groß, kein sichtbares Artefakt; Titel neutral (Stillstand, Effekt-Restdifferenz) |
+| Schnitt erkannt | Filmübergang und harter Szenenwechsel ja, Schwenks nicht fälschlich; Gegenschnitt in gleicher Szene nicht beobachtet |
+
+Auf der Ebene, die sich hier messen lässt, ist das ein **Go für Variante A**
+(Interpolation im Renderer) mit zwei benannten Restrisiken: Gegenschnitte
+mit kleiner Distanz und Effektmatrizen. Die Entscheidung nach PLAN 5.4 (was
+„unbegrenzt" umfasst) bleibt beim Auftraggeber.
 
 ## Was nicht belegt ist
 
-- **Spielszenen mit bewegter Kamera.** Beide gerenderten Szenen haben eine
-  stehende Kamera. Die Bildprüfung sagt deshalb nichts über Kameraschwenks.
-- **Kameraschnitt in gleicher Szene**, siehe oben.
-- **Kosten auf der GPU.** Lavapipe rendert die Dateiauswahl in rund 0,2 s je
-  Frame; das sagt nichts über eine echte GPU. Die Kosten der Variante A sind
-  ein zweiter Durchlauf des Befehlsstroms je Zwischenbild (3.097
-  Zeichenbefehle, 23.335 Vertices) plus die Matrixinterpolation.
-- **Rotation.** Matrizen werden affin gemischt; bei kleinen Schritten ist
-  das unsichtbar (größte Verschiebung 20 Einheiten je Frame), bei schnellen
-  Drehungen schrumpft die Matrix zwischen den Stützstellen.
-- **Länge.** Alles Stichproben von drei bis 120 Frames.
+- **Gegenschnitt in gleicher Szene**, siehe oben.
+- **Spielszene mit Steuerung.** Alle bewegten Szenen sind Zwischensequenzen
+  mit Kamerafahrt; eine gesteuerte Szene (Mario läuft, Kamera folgt) wurde
+  nicht aufgezeichnet, weil die Sequenz nach dem Film auf Eingaben wartet.
+- **Kosten auf der GPU.** Lavapipe rendert die Flugplatz-Szene in rund einer
+  Sekunde je Frame; das sagt nichts über eine echte GPU. Die Kosten der
+  Variante A sind ein zweiter Durchlauf des Befehlsstroms je Zwischenbild
+  (8.800 Zeichenbefehle, 670 KB) plus die Matrixinterpolation.
+- **Rotation.** Matrizen werden affin gemischt; bei den gemessenen Schritten
+  ist das unsichtbar, bei schnellen Drehungen schrumpft die Matrix zwischen
+  den Stützstellen.
+- **Länge.** Stichproben von drei bis 120 Frames, 17 Fenster.
 
 ## Nebenbefund: Stapeltiefe über 30.000 Frames
 

@@ -408,7 +408,37 @@ class MotionTests(unittest.TestCase):
 
     def test_cut_verdict_thresholds(self):
         from spike import cut_verdict
-        self.assertFalse(cut_verdict({"matched_share_of_current": 0.99, "motion_translation_median": 0.4}))
+        still = {"matched_share_of_current": 0.99, "motion_translation_median": 0.4}
+        self.assertFalse(cut_verdict(still))
         self.assertTrue(cut_verdict({"matched_share_of_current": 0.376, "motion_translation_median": 0.4}))
         self.assertTrue(cut_verdict({"matched_share_of_current": 1.0, "motion_translation_median": 1638.0}))
         self.assertFalse(cut_verdict({"matched_share_of_current": None, "motion_translation_median": None}))
+        # Schwenk: waechst stetig, kein Schnitt
+        swoop = [41.3, 117.5, 204.6, 263.1, 229.1]
+        pairs = [{"matched_share_of_current": 0.99, "motion_translation_median": m} for m in swoop]
+        self.assertFalse(any(cut_verdict(p, q) for q, p in zip(pairs, pairs[1:])))
+        # Sprung aus dem Stand: Schnitt
+        jump = {"matched_share_of_current": 0.99, "motion_translation_median": 300.0}
+        self.assertTrue(cut_verdict(jump, still))
+        self.assertFalse(cut_verdict(jump, None))    # ohne Vorpaar nur die harten Regeln
+
+
+class CliTests(unittest.TestCase):
+    def test_analyze_prints_frames_without_draws(self):
+        # Ein Frame ohne Zeichenbefehle (Filmuebergang) darf die Ausgabe nicht abbrechen.
+        import io
+        from contextlib import redirect_stdout
+        import importlib
+        cli = importlib.import_module("__main__") if False else None
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "e.dff"
+            path.write_bytes(build_dff([primitive(0x90, 1, 12), b"\x00" * 4], [[], []], CP_STATE))
+            sys.argv = ["framerate", "analyze", str(path)]
+            spec = importlib.util.spec_from_file_location("framerate_cli", _TOOLS / "framerate" / "__main__.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = module.main(["analyze", str(path)])
+        self.assertEqual(code, 0)
+        self.assertIn("zugeordnet 0 von 0 (-)", out.getvalue())

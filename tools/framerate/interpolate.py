@@ -120,7 +120,7 @@ def synthesize(dff: fifo.Dff, a: int, b: int, t: float = 0.5) -> tuple[fifo.Dff,
                                  f"(a={a}, b={b}, {len(dff.frames)} Frames).")
     if not 0.0 < t < 1.0:
         raise InterpolationError("t muss zwischen 0 und 1 liegen (ausschliesslich).")
-    summaries = fifo.summarize(dff, snapshots=True)
+    summaries = fifo.summarize(dff, snapshots=True, upto=b, keep={a, b})
     draws_a, draws_b = summaries[a].draws, summaries[b].draws
     if summaries[b].stopped_early or summaries[a].stopped_early:
         raise InterpolationError("Ein Frame wurde nicht vollstaendig dekodiert.")
@@ -211,7 +211,9 @@ def synthesize(dff: fifo.Dff, a: int, b: int, t: float = 0.5) -> tuple[fifo.Dff,
     report.bytes_restored = len(tail)
     report.words_restored = len(restore)
 
-    frames = list(dff.frames)
+    # Neue Frame-Objekte, damit die Originalaufzeichnung unveraendert bleibt.
+    frames = [fifo.Frame(k, f.fifo_start, f.fifo_end, f.data, list(f.updates))
+              for k, f in enumerate(dff.frames)]
     frames.insert(b, middle)          # zwischen a und b; bei a + 1 == b direkt dazwischen
     for k, frame in enumerate(frames):
         frame.index = k
@@ -237,8 +239,8 @@ def verify(original: fifo.Dff, result: fifo.Dff, report: Report) -> dict:
     (beide aus der Originalaufzeichnung), und B beginnt im Ergebnis mit
     demselben XF-Zustand wie im Original."""
     a, b, m, t = report.frames[0], report.frames[1], report.middle_index, report.t
-    source = fifo.summarize(original, snapshots=True)
-    summaries = fifo.summarize(result, snapshots=True)
+    source = fifo.summarize(original, snapshots=True, upto=b, keep={a, b})
+    summaries = fifo.summarize(result, snapshots=True, upto=b + 1, keep={m, b + 1})
     draws_a, draws_b = source[a].draws, source[b].draws
     draws_m = summaries[m].draws
     b_state_same = all(x.xf_snapshot == y.xf_snapshot and x.projection == y.projection
