@@ -87,9 +87,48 @@ Befund: Der Widescreen-Code wirkt, und der davon geänderte Chunk läuft im
 Interpreter. Der zweite dort genannte Chunk (`80361600`) wurde in 1800 Frames
 noch nicht angesprungen. Prüfer: `tools/widescreen/verify_ram.py`.
 
-## Befund 3: Das gebackene DOL
+## Befund 3: Das gebackene DOL läuft nativ, ohne SMC-Rückfall
 
-*(wird nachgetragen, sobald der zweite Modulbau abgeschlossen ist)*
+Zweites Modul aus dem in [09](09-DOL-BEFUNDE.md) gebackenen DOL
+(`3a655b2e…`, 69 min 50 s), Runner ohne DOL-Prüfsummenzwang, Spielwurzel mit
+dem gebackenen `sys/main.dol`, **keine Cheats**, 1800 Frames:
+
+| Gegenstand | Gecko-Weg | eingebacken |
+|---|---|---|
+| 13 Schreibungen im RAM | stimmen | stimmen |
+| 12 Einfügestellen | Sprung zum Codehandler, Rumpf wie INI | Sprung nach `0x80417800`, Rumpf und Rücksprung wie berechnet |
+| Seitenverhältnis `0x80412408` | `3FE38E39` | `3FE38E39` |
+| native Aufrufe / Rückfälle | 255.829 / 0 | 300.540 / 0 |
+| Chunk-Prüfungen | 18 | 40 |
+| `smc_failed` | **1** (`802C9600` im Interpreter) | **0** |
+| Heap-Nutzer-RAM | `0x80427820–0x817FEEC0` | `0x80427820–0x817FEEC0` |
+
+Derselbe Spielabschnitt, dieselbe Framezahl: Auf dem Gecko-Weg meldet die
+Laufzeit den Hash-Fehler und interpretiert den geänderten Chunk; mit dem
+gebackenen DOL gibt es keine einzige SMC-Zeile im Log, und die Chunk-Prüfungen
+(40, mehr als beim Gecko-Lauf) bestehen alle. Der Widescreen-Code läuft damit
+**nativ** -- das ist das Ziel von WP8, am laufenden Spiel belegt. Prüfer:
+`tools/widescreen/verify_ram.py --cave 0x80417800`.
+
+## Was für das Produkt daraus folgt
+
+1. **Der Runner erzwingt die DOL-Prüfsumme** (`MODERNGEKKO_REQUIRED_DOL_SHA256`,
+   `moderngekko_run.cpp`) und bootet `sys/main.dol` unmittelbar. Das gebackene
+   DOL muss also die geladene Datei sein, und die Prüfsumme muss auf das
+   gebackene DOL lauten -- oder die Prüfung erfolgt, wie beim Launcher schon
+   heute, vor dem Patchen an der Originaldatei. Für diesen Versuch wurde ein
+   zweiter Runner ohne die Vorgabe gebaut.
+2. **Der Patchmechanismus des Launchers kennt keine neuen Sektionen.**
+   `dol_patch.cpp` ersetzt Worte innerhalb bestehender Textsektionen. Für den
+   Produktweg muss entweder der Launcher das gebackene DOL aus
+   `tools/widescreen` übernehmen, oder der Manifest-Mechanismus um eine
+   Sektion erweitert werden. Das gehört in WP2, Schritt 3.
+3. **Der Codebereich liegt im Stapel.** Sicher gegen den Heap, 61 KB unter
+   der beobachteten Stapelnutzung. Eine Tiefstandsmessung über den
+   Abnahmelauf (WP6) macht daraus einen belegten Wert.
+
+Nicht belegt bleibt, was nur ein Bild zeigen kann: HUD, Effekte, Culling. Das
+bleibt die Bildabnahme aus WP8, Punkt 4, am Windows-Rechner.
 
 ## Was der Prüfstand nicht kann
 

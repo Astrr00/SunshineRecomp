@@ -419,6 +419,10 @@ Beleg: Stichprobenprotokoll, erzeugter Symbolheader.
 
 ### WP8 Widescreen 16:9 im Rekompilat und vollständige Abnahme (M)
 
+> Stand 2026-09-14: Schritte 1 bis 3 erledigt und am laufenden Spiel belegt
+> ([10-KOPFLOSER-PRUEFSTAND.md](10-KOPFLOSER-PRUEFSTAND.md)); offen ist die
+> Bildabnahme (Schritt 4) und die Einbindung in den Launcher (WP2).
+
 1. `tools/patches/gecko_to_dol.py`: die 13 Schreibungen als
    `[OnFrame]`-dword-Patches (bestehender Mechanismus, fließt in den
    Cache-Schlüssel ein); die zwölf Injektionen als Sprung plus Nutzcode in

@@ -187,6 +187,11 @@ Zweck von WP8, und er ist an der echten Spielkopie belegt.
 
 ## Offener Punkt: Wo beginnt der Spielheap?
 
+> **Beantwortet am selben Tag** in [10-KOPFLOSER-PRUEFSTAND.md](10-KOPFLOSER-PRUEFSTAND.md):
+> Der Heap beginnt bei `0x80427820`; der Codebereich liegt am unteren Ende des
+> Hauptstapels und wird vom Heap nicht berührt. Das gebackene DOL läuft nativ
+> ohne SMC-Rückfall. Der Abschnitt bleibt als Weg zur Antwort stehen.
+
 Der Codebereich liegt bei `0x80417800`, unmittelbar hinter dem letzten
 geladenen Byte. Nimmt das Spiel seinen Speicher ab dieser Adresse, ueberschreibt
 es den Bereich. Die Laufzeit merkt das -- ihr SMC-Waechter hasht jeden Chunk
