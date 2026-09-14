@@ -11,6 +11,7 @@ Leseanleitung:
 
 | Abschnitt | Inhalt |
 |---|---|
+| 0 | Zielbild: was „nativer Windows-Port" hier bedeutet, Produktform |
 | 1 | Stand je Anforderung in einer Tabelle |
 | 2 | Leitentscheidungen, die der Plan vorschlägt |
 | 3 | Reihenfolge, Releases, Abhängigkeiten |
@@ -25,6 +26,66 @@ Unverändert bleiben die getroffenen Architekturentscheidungen aus
 `01-MACHBARKEIT.md`: statische Recompilation mit DolRecomp und ModernGekko,
 keine Decompilation, kein Aurora, Zielrevision GMSE01 Rev 0, keine Spieldaten
 im Repository, GPL-3.0-or-later.
+
+---
+
+## 0. Zielbild: nativer Windows-Port
+
+Ziel des Auftrags ist ein **nativer Port von Super Mario Sunshine für Windows
+x86-64**, keine Emulatorinstallation mit Spielabbild. Jede Phase dieses Plans
+wird an diesem Ziel gemessen. Was „nativ" in der gewählten Architektur
+bedeutet und wo ihre Grenze liegt, steht hier ausdrücklich, damit es nicht
+stillschweigend unterschiedlich verstanden wird.
+
+### 0.1 Was heute nativ ist und was nicht
+
+| Schicht | Stand | Folge für den Plan |
+|---|---|---|
+| Spiellogik (CPU) | nativ: statisch nach x86-64 rekompiliert (224 C-Dateien, `gGMSE01_recomp.dll`) | Ausnahmen laufen im Interpreter: 139 SMC-Stellen und die vom Gecko-Code veränderten Chunks. WP8 holt die Widescreen-Chunks in den nativen Code, WP5 misst den Rest |
+| Grafik | der GX-Befehlsstrom des Spiels wird von Dolphins VideoCommon auf Vulkan/OpenGL abgebildet | die Flipper-GPU als Laufzeitbibliothek. Ein Renderer auf Quellcodeebene (Aurora) setzt dekompilierten Spielcode voraus, den es für GMSE01 nicht gibt (01-MACHBARKEIT, 1.1 und 1.2). Diese Grenze gilt für jeden Recomp-Port, auch Zelda64Recomp und SunPad |
+| Ton | DSP-HLE und Audiobackend der Laufzeit | native Nachbildung des DSP; Abnahme in WP1 |
+| System (VI, DVD, Speicherkarte, Timer, Eingabe) | Laufzeitbibliothek mit Dolphin-Abstammung | für den Nutzer unsichtbar, solange die Produktform stimmt (0.2) |
+| Fenster und Launcher | `DolphinNoGUI`-Plattform Win32 (gepatcht), ImGui-Launcher | tragen noch Laufzeitnamen: Fensterklasse `DolphinNoGUI` (in `windows_display_probe.py` belegt), Dolphin-INIs im Profil |
+
+Das ist dieselbe Bedeutung von „nativ", die Zelda64Recomp und SunPad
+verwenden: nativer Spielcode plus eine Laufzeitbibliothek für die
+Hardware-Schichten. Wer auch GPU und DSP ohne Nachbildung will, braucht eine
+Decompilation; die liegt für die US-Fassung nicht vor. Diese Entscheidung wird
+nicht neu aufgerollt.
+
+### 0.2 Produktform
+
+Aus „Windows-Anwendung" folgen Kriterien, die bisher nur verstreut standen. Sie
+gehören zur Abnahme von v0.2 und werden in WP4 umgesetzt:
+
+1. **Eine Anwendung mit eigenem Namen.** `SunshineRecomp.exe` startet, wählt
+   die Spielkopie, richtet ein und spielt. Runner und Werkzeuge sind interne
+   Bestandteile. Fenstertitel, Fensterklasse, Protokoll- und
+   Absturzmeldungen ohne „ModernGekko" oder „Dolphin". Die CMake-Optionen
+   dafür existieren (`MODERNGEKKO_FRONTEND_NAME`,
+   `MODERNGEKKO_DEFAULT_WINDOW_TITLE`, `MODERNGEKKO_RUNNER_OUTPUT_NAME`); die
+   Fensterklasse ist noch fest codiert.
+2. **Eigene Einstellungen.** Der Nutzer sieht keine Dolphin-INIs. Anzeige,
+   Controller und Ton werden in der Anwendung gesetzt und intern übersetzt;
+   das ist die in WP3 gewählte Technik.
+3. **Keine Emulatorbedienung.** Kein Netplay, keine Cheat-Verwaltung, keine
+   Spieleliste. Schnellspeichern (Savestates) bleibt als Komfortfunktion mit
+   eigenem Namen.
+4. **Verhalten wie eine Windows-Anwendung.** Installer, Startmenüeintrag,
+   DPI-Bewusstsein, randloses Vollbild, Alt+Tab ohne Absturz, Verhalten bei
+   Fokusverlust wählbar, Absturzbericht.
+5. **Start ohne Ruckler.** Shader werden beim ersten Start mit
+   Fortschrittsanzeige vorkompiliert (die Laufzeit wartet bereits auf Shader
+   vor dem Start; Kompilierungsmodus in WP12 zu prüfen), das Modul liegt im
+   Cache; der zweite Start ist sofort.
+6. **Alles lokal.** Spielkopie, extrahierte Daten und Modul bleiben auf dem
+   Rechner. Ob das Modul mitgeliefert werden darf, ist eine Entscheidung des
+   Auftraggebers (Abschnitt 6, Nummer 10) und verändert WP2 grundlegend.
+
+### 0.3 Was dem Ziel nicht dient
+
+Aurora als Renderer, Android, andere Regionen, Netplay und die
+RetroAchievements-Elemente der Laufzeit bleiben außerhalb des Umfangs.
 
 ---
 
@@ -174,7 +235,7 @@ WP1, WP3, WP4, WP5 sind untereinander unabhängig
 | Release | Inhalt | Fertig, wenn |
 |---|---|---|
 | v0.1 Entwicklervorschau | Launcher-Ablauf ROM → Import → Modulbau → Spiel; Build Tools dürfen vorausgesetzt werden; 4:3 und 16:9; ein Controller | Abnahmelauf grün; Ton belegt; Ablauf am Rechner des Auftraggebers von Hand durchlaufen |
-| v0.2 Spielbar | Toolchain-Paket im Lieferumfang, Controller-Oberfläche, Stabilität, Installer | frische Windows-11-VM ohne Entwicklungswerkzeuge: ROM → Spiel; drei Controllerarten belegt; 60-Minuten-Dauerlauf |
+| v0.2 Spielbar | Toolchain-Paket im Lieferumfang, Controller-Oberfläche, Stabilität, Installer | frische Windows-11-VM ohne Entwicklungswerkzeuge: ROM → Spiel; drei Controllerarten belegt; 60-Minuten-Dauerlauf; wirkt als eigenständige Anwendung nach 0.2 |
 | v0.3 Anzeige | 16:9 abgenommen, 21:9/32:9, HUD-Anker, Filme, HiDPI/Mehrmonitor | Bildmatrix je Seitenverhältnis; Culling-Test; Filme unverzerrt |
 | v0.4 Framerate | Ergebnis aus WP13/WP14 | Messung Bildrate, Interpolationsqualität, Kameraschnitte ohne Artefakte |
 | v1.0 | alle Anforderungen abgenommen, Endnutzerdokumentation, Lizenzpaket | Anforderungsmatrix vollständig „belegt" |
@@ -238,6 +299,10 @@ Compile-Zeit fest verdrahteten Quellbaum (`vendor/dolphin/module-template`,
 nicht; der Runner sucht das Modul neben der EXE, unter
 `<user>/StaticRecompModules/` oder über `STATICRECOMP_MODULE`.
 
+Vorbehalt: Entscheidung 10 in Abschnitt 6. Wird das Modul mitgeliefert,
+entfallen die Schritte 1, 2 und 4; Schritt 3 reduziert sich auf Prüfung,
+Extraktion und Fortschrittsanzeige.
+
 1. **Spike (S):** Eine selbst enthaltene Toolchain ohne Visual Studio prüfen.
    Kandidaten: llvm-mingw und `zig cc` (beide bringen Header und
    C-Laufzeit für Windows mit). Frage: Lädt ein damit gebautes Modul in der
@@ -289,12 +354,15 @@ gespeicherte Profile nach Neustart aktiv.
 
 ### WP4 Launcher-Bedienung und Windows-Integration (M)
 
-1. Netplay-Elemente ausblenden (kein Auftrag). Einstellungen: interne
+1. Produktform nach Abschnitt 0.2: eigener Name in EXE, Fenstertitel,
+   Fensterklasse und Protokollen; keine Dolphin-INIs sichtbar; Verhalten bei
+   Fokusverlust wählbar.
+2. Netplay-Elemente ausblenden (kein Auftrag). Einstellungen: interne
    Skalierung, Ausgabeauflösung, Vollbildart, VSync, Seitenverhältnis,
    Savestates, Spielstandordner öffnen.
-2. EXE-Manifest (DPI, `longPathAware`), Symbol, Versionsinfo, Einzelinstanz,
+3. EXE-Manifest (DPI, `longPathAware`), Symbol, Versionsinfo, Einzelinstanz,
    Absturzprotokoll (Minidump plus Log) für Fehlerberichte.
-3. Installer (Inno Setup) oder ZIP mit Lizenztexten; Deinstallation lässt
+4. Installer (Inno Setup) oder ZIP mit Lizenztexten; Deinstallation lässt
    Spielstände unangetastet.
 
 Beleg: visuelle Abnahme durch den Auftraggeber mit Bildern; Installation und
@@ -506,7 +574,10 @@ Bildschirmrate oder ohne Begrenzung. Interpoliert wird nur zuordenbare
 Geometrie; Partikel, Wasseranimation und HUD-Animationen laufen in
 30-Hz-Schritten. Die Eingabeabtastung bleibt bei 30 Hz, solange das Polling
 des Spiels nicht gehookt wird (außerhalb des Auftrags). Dieser Umfang muss
-vor WP14 mit dem Auftraggeber vereinbart sein.
+vor WP14 mit dem Auftraggeber vereinbart sein. Zur Einordnung: Zelda64Recomp
+beschreibt seinen Umfang genau so („Game objects and terrain, texture
+scrolling, screen effects, and most HUD elements are all rendered at high
+framerates"; „Changing framerate has no effect on gameplay").
 
 ---
 
@@ -523,6 +594,7 @@ vor WP14 mit dem Auftraggeber vereinbart sein.
 | 7 | Ganzzahlige interne Skalierung (1 bis 12) akzeptabel? | ja; freie Faktoren nicht möglich |
 | 8 | GC-Adapter-Unterstützung (Zadig-Treiber) im Umfang? | nicht in v0.2 |
 | 9 | Mindestanforderungen: Windows 10 22H2 oder nur 11? GPU mit Vulkan 1.1? | Windows 10 22H2 und 11, Vulkan mit OpenGL-Rückfall |
+| 10 | Verteilungsmodell: Modul beim Nutzer bauen (bisherige Festlegung in 02 und 08; WP2 bleibt L) oder das rekompilierte Modul mitliefern wie Zelda64Recomp („prebuilt binaries (which do not contain game assets)"; die Spielkopie dient nur den Assets; WP2 schrumpft auf Prüfung und Extraktion)? Das Modul ist aus dem Spielcode abgeleitet; das Risiko dieser Verteilung trägt der Herausgeber. | bisherige Festlegung beibehalten, bis der Auftraggeber das Risiko bewertet hat; ein späterer Wechsel bleibt möglich, weil Cache-Layout und Laufzeitprüfung (Disc-ID, DOL-SHA-256) in beiden Modellen gleich sind |
 
 ---
 
@@ -559,6 +631,15 @@ Erwartung: zwei bis drei Sitzungen bis einschließlich WP7. Erst auf
 ausdrückliche Aufforderung committen und pushen; deutsch; nichts als fertig
 bezeichnen, was nicht überprüft wurde.
 
+Wo die Arbeit stattfinden muss: Alles, was Spielkopie, Windows-Werkzeugkette
+oder die Belege unter `build/` braucht (WP0 Sicherung, WP1, WP2 Schritt 1,
+WP5, WP6, WP8 Nachweis, WP13), läuft in einer Sitzung auf dem Windows-Rechner
+des Auftraggebers wie bisher. Aus einer entfernten Sitzung ohne Spieldaten
+sind nur reine Repository-Arbeiten möglich: CI-Workflow, Konsolidierung der
+Dokumentation, der `us.map`-Konverter mit Tests an synthetischen Daten,
+`gecko_to_dol.py` an einem synthetischen DOL, das Zuordnungswerkzeug für den
+Framerate-Spike ohne echte Aufzeichnungen.
+
 ---
 
 ## 9. Für diesen Plan geprüfte Fakten (2026-09-14)
@@ -584,6 +665,7 @@ Erinnerung übernommen.
 | Sunshine-Voreinstellungen | `GMS.ini`: `EFBToTextureEnable=False`, `EFBAccessEnable=True`, `ArbitraryMipmapDetection=True`, `PerfQueriesEnable=True` | `Data/Sys/GameSettings/GMS.ini` |
 | Präsentation | keine Interpolation in `Present.cpp`; `VertexShaderManager::LoadProjectionMatrix` ist die Stelle des generischen Seitenverhältnis-Hacks; FifoPlayer bietet `WriteFrame`, `LoadXFReg`, Objekt- und Frame-Bereiche | `Source/Core/VideoCommon/`, `Source/Core/Core/FifoPlayer/` |
 | ModernGekko-Template | Entwicklerwerkzeug (`make run ISO=…`), Controller per Hand in INI; kein Endnutzer-Launcher, keine Verteilungsregel für Module | Template-README |
+| Zelda64Recomp | Releases enthalten den rekompilierten Spielcode („prebuilt binaries (which do not contain game assets)"); die Spielkopie wird im Hauptmenü angegeben und nur für Assets gelesen; Framerate-Umfang: „Game objects and terrain, texture scrolling, screen effects, and most HUD elements are all rendered at high framerates" | README (Branch `dev`) |
 | SunPad bekannte Probleme (2026-09-04) | Timebase im eigenen Recomp-Core zwölffach zu schnell (behoben, Abnahme offen); Modul braucht Mac-Toolchain; 60 FPS nur Test; Widescreen experimentell mit abgetrennten Schatten; Controller-Belegung eng | `docs/KNOWN_ISSUES.md` |
 
 Nicht geprüft und im Plan als Annahme oder „zu prüfen" markiert: das Laden
