@@ -1,0 +1,55 @@
+# Schnelle Pruefungen ohne Spieldaten und ohne Windows-Werkzeugkette.
+#
+# Der vollstaendige Bau laeuft bewusst nicht hier: er braucht Windows, MSVC und
+# rund 940 MB LLVM. Was hier laeuft, faengt die beiden Fehlerarten ab, die sonst
+# erst Wochen spaeter beim naechsten Bootstrap auffallen wuerden -- gebrochene
+# Werkzeuge und Patches, die nicht mehr auf den Upstream passen.
+name: Pruefungen
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests und Syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Syntax aller Python-Dateien
+        run: python -m compileall -q scripts tools tests
+
+      - name: Tests
+        # Erzeugen synthetische Abbilder und DOLs; es werden keine Spieldaten
+        # benoetigt, geladen oder verteilt.
+        run: python -m unittest discover -s tests -v
+
+      - name: Symbolliste pruefen
+        # Pruefsumme der angehefteten Liste und Abgleich mit den Adressen, die
+        # in docs/04 und docs/06 am laufenden Spiel gemessen wurden.
+        run: python tools/symbols check
+
+  patches:
+    name: Patches gegen Upstream
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Passen die Patches noch auf die angehefteten Commits?
+        # Liest Adressen, Commits und Reihenfolge aus scripts/bootstrap.ps1 und
+        # holt per Sparse-Checkout nur die Dateien, die die Patches anfassen.
+        run: python scripts/check_patches.py
