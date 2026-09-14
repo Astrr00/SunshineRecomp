@@ -186,7 +186,15 @@ class IdentifierTests(unittest.TestCase):
         self.assertEqual(symbolmap.to_identifier("12name"), "_12name")
 
     def test_truncates_at_the_recompiler_buffer(self):
-        self.assertEqual(len(symbolmap.to_identifier("a" * 400)), 255)
+        # "char base[112]" in DolRecomps src/backend/symbols.c: 111 Zeichen.
+        self.assertEqual(symbolmap.IDENTIFIER_BUFFER, 112)
+        self.assertEqual(len(symbolmap.to_identifier("a" * 400)), 111)
+
+    def test_finds_a_collision_caused_by_truncation(self):
+        long_name = "x" * 130
+        report = symbolmap.parse(
+            f"{long_name}A=0x80003100\n{long_name}B=0x80003200\n")
+        self.assertEqual(len(symbolmap.identifier_collisions(report.accepted)), 1)
 
     def test_finds_collisions_from_collapsed_underscores(self):
         report = symbolmap.parse(
@@ -232,6 +240,15 @@ class VendoredMapTests(unittest.TestCase):
         ]:
             self.assertIn(expected, names_at.get(address, set()),
                           f"0x{address:08X} traegt nicht den erwarteten Namen")
+
+    def test_identifier_collisions_are_the_measured_number(self):
+        # Am erzeugten generated_symbols.h gegengeprueft: 12573 von 12573
+        # Bezeichnern stimmen mit dieser Nachbildung ueberein.
+        collisions = symbolmap.identifier_collisions(self.report.accepted)
+        self.assertEqual(len(collisions), 22)
+        distinct = {k: v for k, v in collisions.items()
+                    if len({s.name for s in v}) > 1}
+        self.assertEqual(len(distinct), 5)
 
     def test_every_accepted_symbol_survives_the_recompiler(self):
         loaded = dolrecomp_load(symbolmap.to_dolrecomp(self.report.accepted))

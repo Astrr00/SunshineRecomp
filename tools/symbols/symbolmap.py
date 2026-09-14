@@ -34,9 +34,16 @@ from pathlib import Path
 MEM1_START = 0x80000000
 MEM1_END = 0x81800000
 
-# So gross ist der Puffer in DolRecomps src/backend/symbols.c
-# ("char identifier[256]"). Laengere Bezeichner werden dort abgeschnitten.
-IDENTIFIER_BUFFER = 256
+# So gross ist der Puffer, mit dem DolRecomp den Bezeichner bildet:
+# "char base[112]" in src/backend/symbols.c, uebergeben an
+# symbol_name_to_identifier. Es bleiben also 111 Zeichen.
+#
+# Korrektur einer frueheren Fassung: Dort stand 256 nach dem danebenliegenden
+# "char identifier[256]". Das ist aber erst das Ziel, in das der Bezeichner samt
+# Kollisionssuffix kopiert wird, nicht der Puffer der Sanitierung. Am erzeugten
+# generated_symbols.h nachgemessen: kein Bezeichner ist laenger als 111 Zeichen,
+# und genau an dieser Grenze entstehen die meisten Kollisionen.
+IDENTIFIER_BUFFER = 112
 
 _LINE = re.compile(r"^([^=]+)=0x([0-9A-Fa-f]{1,8})$")
 _REJECTED_NAMES = {"UNUSED", "...UNUSED..."}

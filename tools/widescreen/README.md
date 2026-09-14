@@ -68,6 +68,40 @@ Die Spielkopie bleibt unveraendert; `bake` schreibt eine neue Datei. Mit
 `--onframe` zusaetzlich die 13 Schreibungen in der `[OnFrame]`-Form ablegen, die
 `moderngekko-port` von sich aus versteht.
 
+## Am echten Recompiler gegengeprueft
+
+Der echte `dolrecomp` (Commit `40637c46`, unter Linux mit dem C-Backend gebaut,
+eigene Testsuite 19 von 19) wurde auf ein gebackenes DOL angesetzt. Quelle war
+ein synthetisches DOL mit Sunshine-aehnlicher Sektionsaufteilung und der
+**echte** Widescreen-Code aus `GMSE01.ini`:
+
+```
+dolrecomp --gamecube --map <symbole.map> <gebacken.dol> <ausgabe>
+  loaded 12574 executable symbols
+  decoding text[0]: 950272 instructions at 0x80003100
+    950272 decoded, 950272 known, 0 unknown
+  decoding text[1]: 70 instructions at 0x804A3100
+    70 decoded, 70 known, 0 unknown
+    chunks (233 files)
+```
+
+Daran haengt die eigentliche Aussage von WP8:
+
+| Gegenstand | Befund |
+|---|---|
+| DOL nach dem Backen lesbar | ja, drei statt zwei Sektionen |
+| Codebereich als Textsektion erkannt | ja, Index 1, `0x804A3100`, 280 Bytes, ausfuehrbar |
+| Eingefuegte Anweisungen gueltig | **70 von 70 dekodiert, 0 unbekannt** |
+| Im Rekompilat vorhanden | ja, `chunk_0232_text1_804A3100.c` fuer den Bereich und `chunk_0082_text0_8014B100.c` fuer die Spruenge hinein |
+| Nachgepruefte Worte beim Backen | 95 (13 Schreibungen, 12 Spruenge, 70 Worte im Bereich) |
+
+Der Codebereich wird also **mitrekompiliert**, statt zur Laufzeit vom
+Codehandler erzeugt zu werden. Genau das ist der Unterschied zwischen
+interpretiertem und nativem Widescreen.
+
+Das synthetische DOL ist kein Ersatz fuer die eigene Spielkopie: Sektionsgrenzen
+und die Frage BSS oder Daten entscheidet erst das echte Hauptprogramm.
+
 ## Zwei Stellen, die im Voraus nicht entscheidbar sind
 
 **Schreibziele in BSS.** Drei der 13 Schreibungen zielen auf `0x80416620`,

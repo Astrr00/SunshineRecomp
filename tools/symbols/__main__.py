@@ -96,7 +96,8 @@ def command_check(args: argparse.Namespace) -> int:
                 if len({s.name for s in v}) > 1}
     print(f"\n  Bezeichner-Kollisionen: {len(collisions)}")
     print(f"    davon verschiedene Namen: {len(distinct)} "
-          f"(Unterstriche werden zusammengezogen)")
+          f"(Unterstriche zusammengezogen oder bei "
+          f"{symbolmap.IDENTIFIER_BUFFER - 1} Zeichen abgeschnitten)")
     print("    DolRecomp haengt in diesen Faellen die Adresse an den Namen an.")
     for identifier, found in list(distinct.items())[:3]:
         print(f"      {identifier[:60]}: {', '.join(sorted({s.name for s in found}))[:90]}")

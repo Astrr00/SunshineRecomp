@@ -80,18 +80,26 @@ CodeWarrior-Mangling (`__vt__6TMario`, `set__Q29JGeometry8TVec3<f>Fffff`).
 
 DolRecomp macht aus jedem Namen einen C-Bezeichner
 (`DOLRECOMP_SYMBOL_<Name>`). Dabei werden Sonderzeichen zu `_`, mehrfache
-Unterstriche zusammengezogen und bei 255 Zeichen abgeschnitten. **21
-Bezeichner** stehen danach fuer mehr als eine Adresse:
+Unterstriche zusammengezogen und bei **111 Zeichen** abgeschnitten
+(`char base[112]` in `src/backend/symbols.c`). **22 Bezeichner** stehen danach
+fuer mehr als eine Adresse:
 
 * 17 sind eingebettete Vorlagenfunktionen, die der Compiler je
   Uebersetzungseinheit erneut ausgegeben hat (`MsWrap<f>__Ffff` steht an 29
   Adressen). Das ist keine Unstimmigkeit der Liste.
-* 4 entstehen erst beim Zusammenziehen der Unterstriche, etwa
-  `writeBlock__12TCardManagerFUl` und `writeBlock___12TCardManagerFUl`.
+* 4 entstehen beim Zusammenziehen der Unterstriche: `writeBlock__…` und
+  `writeBlock___…` in `TCardManager` und drei gleichartige Faelle.
+* 1 entsteht durch das Abschneiden, eine lange `JGadget`-Vorlage.
 
-Der Recompiler haengt in diesen Faellen die Adresse an den Bezeichner. Fuer
-Mods heisst das: Diese 21 Namen sind nicht allein benutzbar, die Adresse
-gehoert dazu. Alle uebrigen sind eindeutig.
+Der Recompiler haengt in diesen Faellen die Adresse an den Bezeichner
+(`<name>_%08X`). Fuer Mods heisst das: Diese 22 Namen sind nicht allein
+benutzbar, die Adresse gehoert dazu. Alle uebrigen sind eindeutig.
+
+> **Korrektur.** Eine fruehere Fassung dieser Seite nannte 255 Zeichen und 21
+> Kollisionen. Die 255 stammten aus dem benachbarten `char identifier[256]`,
+> das aber erst das Ziel fuer den Bezeichner **samt Kollisionssuffix** ist,
+> nicht der Puffer der Sanitierung. Nachgemessen an einem tatsaechlich
+> erzeugten `generated_symbols.h` (siehe unten).
 
 ## Benutzung
 
@@ -114,6 +122,35 @@ dolrecomp --map build/GMSE01.map --gamecube <main.dol> <ausgabe>
 Der Recompiler erzeugt dann `generated_symbols.h` mit
 `DOLRECOMP_SYMBOL_<Name>` und `DOLRECOMP_SYMBOL_SIZE_<Name>`. Mods binden an
 Namen statt an Zahlen.
+
+## Am echten Recompiler gegengeprueft
+
+Das Ausgabeformat ist nicht nur gegen eine Nachbildung des Lesers geprueft,
+sondern gegen den Recompiler selbst. DolRecomp `40637c46` wurde dafuer unter
+Linux gebaut (C-Backend, keine LLVM-Entwicklungsdateien noetig; eigene
+Testsuite 19 von 19 bestanden) und auf ein synthetisches DOL mit
+Sunshine-aehnlicher Sektionsaufteilung angesetzt:
+
+```
+dolrecomp --gamecube --map <erzeugte.map> <synthetisches.dol> <ausgabe>
+  loaded 12574 executable symbols
+```
+
+Ergebnis:
+
+| Gegenstand | Befund |
+|---|---|
+| Liste angenommen | ja; keine Meldung `symbol map has no executable entries` |
+| `generated_symbols.h` | erzeugt, mit `DOLRECOMP_SYMBOL_memset 0x80003100u` |
+| Bezeichner verglichen | **12.573 von 12.573 stimmen mit `to_identifier` ueberein, null Abweichungen** |
+| Kollisionssuffixe im Header | 115 Bezeichner tragen `_%08X` |
+
+Erst dieser Vergleich hat die Puffergroesse von 111 Zeichen zutage gefoerdert;
+mit dem zuvor angenommenen Wert wichen 103 Bezeichner ab.
+
+Das synthetische DOL ersetzt nicht die Pruefung gegen die eigene Spielkopie:
+Welche Symbole in eine Textsektion fallen, entscheidet erst das echte
+Hauptprogramm.
 
 ## Pruefung gegen die eigene Spielkopie
 
