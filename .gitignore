@@ -20,6 +20,11 @@ generated/
 # Externe Abhaengigkeiten (per Bootstrap geklont, nicht vendoriert)
 ref/
 
+# RVZ-Leser: auf Wunsch des Auftraggebers nicht im Repository.
+# Ohne ihn lehnt tools/import komprimierte Container wie bisher mit Hinweis ab;
+# gewandelt wird dann mit DolphinTool (siehe docs/HANDOFF.md, Abschnitt 5).
+tools/import/rvz.py
+
 # Werkzeuge
 __pycache__/
 *.pyc

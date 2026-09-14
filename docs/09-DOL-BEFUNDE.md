@@ -17,6 +17,12 @@ Messwerte.
 | Verfahren | ZSTD, Stufe 19, Blockgroesse 131.072, ein Rohdatenbereich mit 11.139 Gruppen |
 | Entpackt mit | eigenem Leser nach RecompCore `c6a600eb` (`WIABlob`, `WIACompression`, `LaggedFibonacciGenerator`) |
 
+Der Leser liegt als `tools/import/rvz.py` vor, ist aber auf Wunsch des
+Auftraggebers **nicht Bestandteil des Repositorys** (Eintrag in `.gitignore`).
+Verfolgter Code haengt nicht an ihm: Fehlt er, lehnt `tools/import`
+komprimierte Container wie bisher mit Hinweis ab, und die Wandlung laeuft ueber
+DolphinTool wie in [HANDOFF.md](HANDOFF.md), Abschnitt 5.
+
 Die Groesse des RVZ deckt sich mit der Angabe in
 [02-STATUS.md](02-STATUS.md); es ist dieselbe Datei wie bei den frueheren
 Sitzungen.
