@@ -160,13 +160,64 @@ Zweck von WP8, und er ist an der echten Spielkopie belegt.
 1. **Kein Lauf.** Nichts davon wurde gespielt. Ob das Bild stimmt, ob der
    SMC-Rueckfall im Log tatsaechlich verschwindet und ob HUD, Effekte und
    Culling taugen, muss am laufenden Spiel geprueft werden.
-2. **Die Adresse des Codebereichs ist nicht abgesichert.** `0x80417800` liegt
-   unmittelbar hinter dem letzten geladenen Byte. Der DOL-Kopf kennt den
-   Arena-/Heapbereich des Spiels nicht. Faellt der Heap dorthin, ueberschreibt
-   das Spiel den Bereich, der SMC-Waechter der Laufzeit stuft den Chunk zurueck
-   und der Interpreter fuehrt Unsinn aus. **Das ist vor dem ersten Start zu
-   klaeren** -- etwa durch Auslesen von `__OSArenaLo` im laufenden Spiel oder
-   durch Verschieben des Bereichs samt Anpassung der Arena.
+2. **Die Adresse des Codebereichs ist nicht abgesichert.** Siehe den naechsten
+   Abschnitt; das ist der letzte offene Punkt von WP8.
 3. **Kein Modulbau.** `moderngekko-port` wurde hier nicht gefahren; der Schritt
    vom erzeugten C zum ladbaren Modul steht aus.
 4. **Nur diese Revision.** Alle Zahlen gelten fuer `GMSE01` Rev 0.
+
+## Offener Punkt: Wo beginnt der Spielheap?
+
+Der Codebereich liegt bei `0x80417800`, unmittelbar hinter dem letzten
+geladenen Byte. Nimmt das Spiel seinen Speicher ab dieser Adresse, ueberschreibt
+es den Bereich. Die Laufzeit merkt das -- ihr SMC-Waechter hasht jeden Chunk
+beim ersten nativen Sprung hinein und stuft ihn bei Abweichung zurueck --, und
+der Interpreter fuehrt dann aus, was gerade dort steht. Das waere kein stiller
+Fehler, sondern ein Absturz.
+
+### Was am DOL geklaert ist
+
+Die Symbolliste nennt die beiden Zeiger, in denen die Arena-Grenzen stehen:
+
+| Symbol | Adresse |
+|---|---|
+| `__OSArenaLo` | `0x8040CE48` |
+| `__OSArenaHi` | `0x8040E798` |
+
+Beide liegen im BSS-Bereich; ihre **Werte** setzt das Spiel beim Start.
+`OSSetArenaLo` steht bei `0x803433AC`, `OSInit` bei `0x80341D94`.
+
+Gesucht und **nicht gefunden**: Die Adresse `0x80417800` kommt im gesamten DOL
+weder als Datenwort noch als `lis`/`ori`- oder `lis`/`addi`-Paar vor. Die
+Untergrenze ist also keine eingebackene Konstante gleich dem Abbildende; sie
+wird zur Laufzeit berechnet. Aus der Datei allein ist die Frage damit nicht zu
+beantworten.
+
+Ebenfalls geprueft und verworfen: ein Codebereich in ungenutztem Platz
+innerhalb des Abbilds. Zusammenhaengende Nullbereiche ab 280 Bytes gibt es nur
+in `text0` (drei, groesster 1.228 Bytes) und `data12` (sieben, groesster 780
+Bytes). Wozu diese Bereiche dienen, ist nicht bekannt; sie ohne Kenntnis zu
+belegen waere geraten, nicht gemessen.
+
+### Wie es zu beantworten ist
+
+Am laufenden Spiel, mit einem Befehl:
+
+```bash
+python tools/diagnostics/sunshine_state.py     --automation <automations-verzeichnis> --cave-address 0x80417800
+```
+
+Der Zustandsleser gibt jetzt zusaetzlich `arena.lo`, `arena.hi` und
+`arena.cave_below_arena` aus. Ist `cave_below_arena` wahr, liegt der Bereich
+unterhalb des Spielheaps und bleibt unberuehrt.
+
+Faellt die Antwort ungünstig aus, stehen drei Wege offen:
+
+1. **Arena anheben.** Die berechnete Untergrenze um die Groesse des Bereichs
+   nach oben schieben. Kostet 280 Bytes Heap und ist der uebliche Weg.
+2. **Bereich verschieben.** Etwa unter `__OSArenaHi`, wenn dort Luft ist.
+3. **Auf Einfuegungen verzichten** und nur die 13 direkten Schreibungen
+   einbacken. Die brauchen keinen Codebereich. Der Rest bliebe dann beim
+   Gecko-Weg -- also ein Teilerfolg statt des vollen.
+
+Vor dieser Messung sollte kein gebackenes DOL in einen echten Modulbau gehen.
