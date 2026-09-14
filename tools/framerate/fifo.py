@@ -18,6 +18,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 FILE_ID = 0x0D01F1F0
+HEADER = "<IIIQIQIQIQIQIIQIII8s"   # FifoDataFile.cpp: FileHeader, 128 Bytes
+
+# Matrixspeicher, den ein Zwischenbild interpolieren muss: Positions-,
+# Normalen- und Post-Transform-Matrizen (Woerter 0x000-0x0FF, 0x400-0x45F,
+# 0x500-0x5FF). Als Momentaufnahme je Zeichenbefehl 608 Woerter.
+SNAPSHOT_REGIONS = ((0x000, 0x100), (0x400, 0x460), (0x500, 0x600))
+SNAPSHOT_WORDS = sum(end - start for start, end in SNAPSHOT_REGIONS)
 
 # CP-Register
 CP_MATINDEX_A, CP_MATINDEX_B = 0x30, 0x40
@@ -30,7 +37,8 @@ XF_POSMATRICES, XF_POSMATRICES_END = 0x000, 0x100
 XF_NORMALMATRICES, XF_NORMALMATRICES_END = 0x400, 0x460
 XF_POSTMATRICES, XF_POSTMATRICES_END = 0x500, 0x600
 XF_SETMATRIXINDA = 0x1018
-XF_PROJECTION = 0x1020  # sechs Werte
+XF_PROJECTION = 0x1020  # sechs Gleitkommawerte, dann 0x1026 der Typ (0 perspektivisch, 1 orthografisch)
+XF_PROJECTION_WORDS = 7
 
 # Groessen je Attribut: (Art, Format, Elemente) -> Bytes.
 # Art: 1 direkt, 2 Index8, 3 Index16. Format: 0..7 wie ComponentFormat.
@@ -80,20 +88,28 @@ class Dff:
     xf_mem: list[int]
     xf_regs: list[int]
     frames: list[Frame]
+    # Fuer write(): unveraendert uebernommene Kopffelder und der Texturspeicher
+    min_loader: int = 1
+    flags: int = 0
+    tex_mem: bytes = b""
+    mem1_size: int = 0x1800000
+    mem2_size: int = 0
 
 
 def read(path: Path) -> Dff:
     data = path.read_bytes()
     if len(data) < 128:
         raise FifoError("Datei zu klein fuer einen DFF-Kopf.")
-    (file_id, version, _min_loader, bp_off, bp_size, cp_off, cp_size, xf_off, xf_size,
-     xfr_off, xfr_size, frame_list, frame_count, _flags, _tex_off, _tex_size,
-     _mem1, _mem2, game_id) = struct.unpack_from("<IIIQIQIQIQIQIIQIII8s", data, 0)
+    (file_id, version, min_loader, bp_off, bp_size, cp_off, cp_size, xf_off, xf_size,
+     xfr_off, xfr_size, frame_list, frame_count, flags, tex_off, tex_size,
+     mem1, mem2, game_id) = struct.unpack_from(HEADER, data, 0)
     if file_id != FILE_ID:
         raise FifoError(f"Keine DFF-Datei (Kennung 0x{file_id:08X}).")
 
-    def words(offset: int, size: int) -> list[int]:
-        return list(struct.unpack_from(f"<{size // 4}I", data, offset))
+    def words(offset: int, count: int) -> list[int]:
+        # Die Groessenfelder zaehlen u32-Elemente (FifoDataFile::Load: ReadArray
+        # mit header.bpMemSize usw.), nur texMemSize zaehlt Bytes (u8-Feld).
+        return list(struct.unpack_from(f"<{count}I", data, offset))
 
     frames: list[Frame] = []
     for i in range(frame_count):
@@ -108,7 +124,44 @@ def read(path: Path) -> Dff:
                             data[fifo_off:fifo_off + fifo_size], updates))
     return Dff(path, version, game_id.split(b"\0")[0].decode("ascii", "replace"),
                words(bp_off, bp_size), words(cp_off, cp_size), words(xf_off, xf_size),
-               words(xfr_off, xfr_size), frames)
+               words(xfr_off, xfr_size), frames, min_loader, flags,
+               data[tex_off:tex_off + tex_size], mem1, mem2)
+
+
+def write(dff: Dff, path: Path) -> None:
+    """Schreibt eine DFF in Dolphins Dateilayout (FifoDataFile::Save).
+
+    Reihenfolge wie im Original: Kopf, Frameliste, BP/CP/XF-Speicher,
+    XF-Register, Texturspeicher, dann je Frame Befehlsstrom und
+    Speicheraktualisierungen (erst deren Daten, dann die Eintraege).
+    """
+    out = bytearray(128 + 64 * len(dff.frames))
+    offsets = {}
+    for name, words_ in (("bp", dff.bp_mem), ("cp", dff.cp_mem),
+                         ("xf", dff.xf_mem), ("xfr", dff.xf_regs)):
+        offsets[name] = (len(out), len(words_))     # Anzahl u32, nicht Bytes
+        out += struct.pack(f"<{len(words_)}I", *words_)
+    offsets["tex"] = (len(out), len(dff.tex_mem))
+    out += dff.tex_mem
+    for i, frame in enumerate(dff.frames):
+        data_off = len(out)
+        out += frame.data
+        entries = []
+        for u in frame.updates:
+            d_off = len(out)
+            out += u.data
+            entries.append(struct.pack("<IIQIB3x", u.fifo_position, u.address,
+                                       d_off, len(u.data), u.kind))
+        upd_off = len(out)
+        out += b"".join(entries)
+        struct.pack_into("<QIIIQI32x", out, 128 + 64 * i, data_off, len(frame.data),
+                         frame.fifo_start, frame.fifo_end, upd_off, len(frame.updates))
+    struct.pack_into(HEADER, out, 0, FILE_ID, dff.version, dff.min_loader,
+                     *offsets["bp"], *offsets["cp"], *offsets["xf"], *offsets["xfr"],
+                     128, len(dff.frames), dff.flags, *offsets["tex"],
+                     dff.mem1_size, dff.mem2_size,
+                     dff.game_id.encode("ascii", "replace")[:8].ljust(8, b"\0"))
+    path.write_bytes(bytes(out))
 
 
 # ---------------------------------------------------------------------------
@@ -127,8 +180,10 @@ class Draw:
     matrix_index: int         # aus MATINDEX_A, Bits 0..5
     matrix: tuple[float, ...]  # aktueller Inhalt der Positionsmatrix (12 Werte)
     matrices_hash: int         # alle Positionsmatrizen 0x000-0x0FF, fuer Matrix je Vertex
-    projection: tuple[int, ...]
+    projection: tuple[int, ...]   # XF 0x1020-0x1026: sechs Parameter und der Typ
     texture_key: tuple[int, ...]
+    depth: int = 0                  # 0 im Frame selbst, sonst in einer Display-Liste
+    xf_snapshot: bytes | None = None  # SNAPSHOT_REGIONS als "<608I", falls angefordert
 
 
 @dataclass
@@ -151,12 +206,14 @@ class FrameSummary:
 class Decoder:
     """Verfolgt CP-, XF- und BP-Zustand und sammelt Zeichenbefehle."""
 
-    def __init__(self, dff: Dff):
+    def __init__(self, dff: Dff, snapshots: bool = False):
+        self.snapshots = snapshots
         self.cp = list(dff.cp_mem) + [0] * (256 - len(dff.cp_mem))
         self.xf = list(dff.xf_mem) + [0] * (0x1000 - len(dff.xf_mem))
         self.xfr = list(dff.xf_regs) + [0] * (0x58 - len(dff.xf_regs))
         self.bp = list(dff.bp_mem) + [0] * (256 - len(dff.bp_mem))
         self.ram: dict[int, bytes] = {}
+        self.last_efb_copy: int | None = None   # Position des letzten BP 0x52 (Frameebene)
 
     # -- Vertexgroesse aus VCD und VAT -------------------------------------
     def vertex_size(self, vat: int) -> tuple[int, int, bool]:
@@ -185,6 +242,12 @@ class Decoder:
                 fmt, elements = tex_fmt[i]
                 size += _TEX[kind][fmt][elements]
         return size, pos_kind, bool(lo & 1)
+
+    def snapshot(self) -> bytes:
+        words: list[int] = []
+        for start, end in SNAPSHOT_REGIONS:
+            words += self.xf[start:end]
+        return struct.pack(f"<{SNAPSHOT_WORDS}I", *words)
 
     def matrix(self, index: int) -> tuple[float, ...]:
         base = XF_POSMATRICES + index * 4
@@ -215,6 +278,7 @@ class Decoder:
             base_position: int = 0, depth: int = 0) -> None:
         if depth == 0:
             self._applied = set()
+            self.last_efb_copy = None
         stream = frame.data if data is None else data
         pos = 0
         while pos < len(stream):
@@ -248,7 +312,7 @@ class Decoder:
                         self.xfr[target - 0x1000] = value
                 if address < XF_POSTMATRICES_END:
                     summary.xf_matrix_loads += 1
-                elif XF_PROJECTION <= address < XF_PROJECTION + 6:
+                elif XF_PROJECTION <= address < XF_PROJECTION + XF_PROJECTION_WORDS:
                     summary.projection_loads += 1
                 else:
                     summary.xf_other_loads += 1
@@ -288,6 +352,8 @@ class Decoder:
                 if pos + 5 > len(stream):
                     break
                 self.bp[stream[pos + 1]] = struct.unpack_from(">I", stream, pos + 1)[0] & 0xFFFFFF
+                if stream[pos + 1] == 0x52 and depth == 0:   # BPMEM_TRIGGER_EFB_COPY
+                    self.last_efb_copy = absolute
                 summary.bp_loads += 1
                 pos += 5
                 continue
@@ -305,7 +371,8 @@ class Decoder:
                 summary.draws.append(Draw(
                     absolute, (op & 0x78) >> 3, vat, count, size, pos_kind, per_vertex,
                     index, self.matrix(index), hash(tuple(self.xf[0:0x100])),
-                    tuple(self.xfr[0x20:0x26]), self.texture_key()))
+                    tuple(self.xfr[0x20:0x27]), self.texture_key(), depth,
+                    self.snapshot() if self.snapshots else None))
                 pos += total
                 continue
             summary.unknown_opcodes += 1
@@ -315,8 +382,8 @@ class Decoder:
             summary.bytes_decoded = pos
 
 
-def summarize(dff: Dff) -> list[FrameSummary]:
-    decoder = Decoder(dff)
+def summarize(dff: Dff, snapshots: bool = False) -> list[FrameSummary]:
+    decoder = Decoder(dff, snapshots)
     result = []
     for frame in dff.frames:
         summary = FrameSummary()

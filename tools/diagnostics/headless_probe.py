@@ -61,7 +61,7 @@ def main() -> int:
                         "abgespielt (wie tests/fixtures/airstrip-camera.json)")
     p.add_argument("--fifo", metavar="FRAMES",  type=int,
                    help="nach dem Warten so viele Frames als DFF aufzeichnen "
-                        "(record_fifo aus dem FIFO-Patch, 1 bis 120)")
+                        "(record_fifo aus dem FIFO-Patch; bis 120 erprobt)")
     args = p.parse_args()
 
     root = args.output.resolve()
@@ -79,6 +79,11 @@ def main() -> int:
         "[Logs]\nActionReplay=True\nBOOT=True\nCORE=True\nCOMMON=True\n")
     (user / "Config/Dolphin.ini").write_text(
         f"[Core]\nEnableCheats={'True' if args.cheats_ini else 'False'}\n")
+    # Bilder gibt es aus diesem Lauf nicht: Der Software-Renderer braucht eine
+    # GL-Praesentation, die ModernGekko unter Linux abschaltet (ENABLE_EGL OFF),
+    # und Vulkan kopflos bricht im Frontend mit einem ImGui-Assert ab (kein
+    # Kontext). Bilder entstehen ueber die FIFO-Aufzeichnung und
+    # tools/framerate/replay.py (dolphin-emu-nogui, Vulkan auf Lavapipe).
     if args.cheats_ini:
         (user / "GameSettings").mkdir()
         (user / "GameSettings/GMSE01.ini").write_bytes(args.cheats_ini.read_bytes())
@@ -105,7 +110,21 @@ def main() -> int:
                        args.timeout, f"warten auf Frame {args.frames}")
             if args.sequence:
                 steps = json.loads(args.sequence.read_text())
+                manifest["recordings"] = []
                 for step in steps:
+                    if "record" in step:
+                        # {"record": FRAMES, "name": NAME}: FIFO-Aufzeichnung an
+                        # dieser Stelle der Folge; das Spiel laeuft dabei weiter.
+                        dff = auto / f"{step.get('name', len(manifest['recordings']))}.dff"
+                        send(auto, "record_fifo",
+                             [f"frames={step['record']}", f"path={dff}"], timeout=120)
+                        wait_until(proc, lambda: dff.is_file() and dff.stat().st_size > 0,
+                                   60, "warten auf die FIFO-Datei")
+                        manifest["recordings"].append({
+                            "path": str(dff), "frames": step["record"],
+                            "bytes": dff.stat().st_size,
+                            "sha256": hashlib.sha256(dff.read_bytes()).hexdigest()})
+                        continue
                     send(auto, "pad_frames",
                          [f"{key}={value}" for key, value in step.items()], timeout=120)
                 manifest["sequence"] = steps
@@ -142,7 +161,7 @@ def main() -> int:
                     proc.kill()
             manifest["exit_code"] = proc.poll()
             (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    print(json.dumps({k: manifest[k] for k in ("reads", "fifo", "exit_code")
+    print(json.dumps({k: manifest[k] for k in ("reads", "fifo", "recordings", "exit_code")
                       if k in manifest} | {"error": manifest.get("error")}, indent=2))
     return 0 if manifest.get("reads") and "error" not in manifest else 1
 
