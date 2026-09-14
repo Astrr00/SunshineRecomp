@@ -200,3 +200,165 @@ def control_sample(dol: Dol, count: int, seed: int = 20260914) -> list[int]:
             continue
         addresses.append(section.address + generator.randrange(words) * 4)
     return addresses
+
+
+# ---------------------------------------------------------------------------
+# Schreibender Teil: Worte aendern und Codebereiche anlegen
+# ---------------------------------------------------------------------------
+
+# DOL-Sektionen liegen ueblicherweise auf 32 Byte ausgerichtet in der Datei.
+SECTION_ALIGNMENT = 0x20
+
+
+@dataclass(frozen=True)
+class Region:
+    """Ein belegter Adressbereich des geladenen Programms."""
+    start: int
+    end: int
+    label: str
+
+
+def memory_map(dol: Dol) -> list[Region]:
+    """Alle belegten Bereiche, nach Adresse sortiert -- einschliesslich BSS.
+
+    BSS steht nicht in der Datei, belegt zur Laufzeit aber Speicher. Wer einen
+    Codebereich sucht, muss ihn mitrechnen.
+    """
+    regions = [
+        Region(section.address, section.end,
+               f"{'text' if section.executable else 'data'}{section.index}")
+        for section in dol.sections
+    ]
+    if dol.bss_size:
+        regions.append(Region(dol.bss_address, dol.bss_address + dol.bss_size,
+                              "bss"))
+    return sorted(regions, key=lambda region: region.start)
+
+
+def gaps(dol: Dol) -> list[Region]:
+    """Luecken zwischen den belegten Bereichen.
+
+    Nur ein Hinweis, keine Freigabe: Der Spielheap und zur Laufzeit angelegte
+    Puffer stehen in keinem DOL-Kopf. Ob eine Luecke wirklich frei bleibt, zeigt
+    erst das laufende Spiel.
+    """
+    result: list[Region] = []
+    regions = memory_map(dol)
+    for previous, following in zip(regions, regions[1:]):
+        if following.start > previous.end:
+            result.append(Region(previous.end, following.start,
+                                 f"zwischen {previous.label} und {following.label}"))
+    return result
+
+
+def branch(source: int, destination: int, link: bool = False) -> int:
+    """Kodiert einen unbedingten PowerPC-Sprung (b beziehungsweise bl)."""
+    offset = destination - source
+    if offset % 4 != 0:
+        raise DolError(
+            f"Sprung von 0x{source:08X} nach 0x{destination:08X} ist nicht "
+            f"durch 4 teilbar.")
+    # Das Feld traegt 24 Bit plus zwei implizite Nullbits: +/-32 MiB.
+    if not -(1 << 25) <= offset < (1 << 25):
+        raise DolError(
+            f"Sprung von 0x{source:08X} nach 0x{destination:08X} ist mit "
+            f"{offset} Bytes zu weit; ein einzelnes b reicht nur 32 MiB weit.")
+    return 0x48000000 | (offset & 0x03FFFFFC) | (1 if link else 0)
+
+
+class DolBuilder:
+    """Aendert ein DOL: einzelne Worte und neue Codesektionen."""
+
+    def __init__(self, source: Dol):
+        self.source = source
+        self.data = bytearray(source.data)
+        self.sections = list(source.sections)
+        self._appended: list[Section] = []
+
+    @property
+    def appended(self) -> list[Section]:
+        return list(self._appended)
+
+    def section_of(self, address: int) -> Section | None:
+        for section in self.sections:
+            if section.contains(address):
+                return section
+        return None
+
+    def in_bss(self, address: int) -> bool:
+        return (self.source.bss_size != 0 and
+                self.source.bss_address <= address
+                < self.source.bss_address + self.source.bss_size)
+
+    def write_word(self, address: int, value: int) -> Section:
+        """Schreibt ein Wort und gibt die getroffene Sektion zurueck.
+
+        Adressen ausserhalb der Datei -- vor allem in BSS -- sind ein Fehler
+        und keine stille Auslassung: BSS steht nicht im DOL, ein Wert dort
+        laesst sich nicht einbacken, sondern nur zur Laufzeit setzen.
+        """
+        if address % 4 != 0:
+            raise DolError(f"Adresse 0x{address:08X} ist nicht durch 4 teilbar.")
+        section = self.section_of(address)
+        if section is None:
+            where = "in BSS" if self.in_bss(address) else "ausserhalb aller Sektionen"
+            raise DolError(
+                f"Adresse 0x{address:08X} liegt {where} und steht damit nicht in "
+                f"der Datei. Ein Wert dort kann nur zur Laufzeit gesetzt werden "
+                f"(Mod), nicht im DOL.")
+        if address + 4 > section.end:
+            raise DolError(
+                f"Wort bei 0x{address:08X} ragt ueber das Ende von Sektion "
+                f"{section.index} hinaus.")
+        offset = section.offset + (address - section.address)
+        struct.pack_into(">I", self.data, offset, value)
+        return section
+
+    def read_word(self, address: int) -> int | None:
+        section = self.section_of(address)
+        if section is None or address + 4 > section.end:
+            return None
+        offset = section.offset + (address - section.address)
+        return struct.unpack_from(">I", self.data, offset)[0]
+
+    def append_text_section(self, address: int, words: list[int]) -> Section:
+        """Legt eine neue Textsektion an und traegt sie in den Kopf ein."""
+        if not words:
+            raise DolError("Eine leere Sektion wird nicht angelegt.")
+        if address % SECTION_ALIGNMENT != 0:
+            raise DolError(
+                f"Die Sektionsadresse 0x{address:08X} ist nicht auf "
+                f"{SECTION_ALIGNMENT} Byte ausgerichtet.")
+        used = {section.index for section in self.sections}
+        free = [index for index in range(TEXT_SECTIONS) if index not in used]
+        if not free:
+            raise DolError(
+                f"Alle {TEXT_SECTIONS} Textsektions-Plaetze des DOL-Kopfes sind "
+                f"belegt. Fuer eingefuegten Code bleibt so kein Platz.")
+
+        size = len(words) * 4
+        end = address + size
+        for region in memory_map(self.source):
+            if address < region.end and region.start < end:
+                raise DolError(
+                    f"Der Bereich 0x{address:08X}-0x{end:08X} ueberschneidet "
+                    f"{region.label} (0x{region.start:08X}-0x{region.end:08X}).")
+
+        padding = (-len(self.data)) % SECTION_ALIGNMENT
+        self.data.extend(b"\0" * padding)
+        offset = len(self.data)
+        for word in words:
+            self.data.extend(struct.pack(">I", word))
+
+        index = free[0]
+        struct.pack_into(">I", self.data, OFF_SECTION_OFFSETS + index * 4, offset)
+        struct.pack_into(">I", self.data, OFF_SECTION_ADDRESSES + index * 4, address)
+        struct.pack_into(">I", self.data, OFF_SECTION_SIZES + index * 4, size)
+        section = Section(index=index, executable=True, offset=offset,
+                          address=address, size=size)
+        self.sections.append(section)
+        self._appended.append(section)
+        return section
+
+    def to_bytes(self) -> bytes:
+        return bytes(self.data)

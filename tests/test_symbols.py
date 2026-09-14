@@ -1,7 +1,7 @@
 """Tests fuer die Symbolliste und die DOL-Pruefung.
 
-Alle Tests laufen ohne Spieldaten. Das DOL fuer die Pruefpfade wird
-synthetisch erzeugt; ein echtes Abbild ist damit ausdruecklich nicht getestet.
+Alle Tests laufen ohne Spieldaten. Das DOL-Modul selbst wird in
+tests/test_dol.py geprueft.
 
 Die Gegenprobe ``dolrecomp_parse_line`` bildet ``parse_line`` aus DolRecomps
 ``src/analysis/symbol_map.c`` (Commit 40637c46) nach. Damit wird die erzeugte
@@ -14,23 +14,15 @@ from __future__ import annotations
 
 import hashlib
 import string
-import struct
 import sys
 import unittest
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools" / "symbols"))
+_TOOLS = Path(__file__).resolve().parent.parent / "tools"
+sys.path.insert(0, str(_TOOLS / "symbols"))
+sys.path.insert(0, str(_TOOLS / "common"))
 
-import dol as dolfile  # noqa: E402
 import symbolmap  # noqa: E402
-
-TEXT_ADDRESS = 0x80003100
-DATA_ADDRESS = 0x80400000
-BLR = 0x4E800020
-STWU = 0x9421FFF0
-MFLR = 0x7C0802A6
-ORI_NOP = 0x60000000
 
 
 # --------------------------------------------------------------------------
@@ -84,39 +76,6 @@ def dolrecomp_load(text: str) -> list[tuple[int, int, str]]:
             continue
         loaded.append(parsed)
     return loaded
-
-
-def build_dol(text_words: list[int] | None = None, entry: int = TEXT_ADDRESS,
-              data_words: int = 4, text_slots: int = 1) -> bytes:
-    """Baut ein minimales, formal gueltiges DOL."""
-    words = text_words if text_words is not None else [MFLR, BLR, STWU, BLR]
-    text = b"".join(struct.pack(">I", word) for word in words)
-    data = b"\0" * (data_words * 4)
-
-    header = bytearray(dolfile.DOL_HEADER_SIZE)
-    offset = dolfile.DOL_HEADER_SIZE
-    per_slot = len(text) // text_slots
-    for slot in range(text_slots):
-        start = slot * per_slot
-        size = per_slot if slot < text_slots - 1 else len(text) - start
-        struct.pack_into(">I", header, dolfile.OFF_SECTION_OFFSETS + slot * 4,
-                         offset + start)
-        struct.pack_into(">I", header, dolfile.OFF_SECTION_ADDRESSES + slot * 4,
-                         TEXT_ADDRESS + start)
-        struct.pack_into(">I", header, dolfile.OFF_SECTION_SIZES + slot * 4, size)
-
-    data_slot = dolfile.TEXT_SECTIONS
-    struct.pack_into(">I", header, dolfile.OFF_SECTION_OFFSETS + data_slot * 4,
-                     offset + len(text))
-    struct.pack_into(">I", header, dolfile.OFF_SECTION_ADDRESSES + data_slot * 4,
-                     DATA_ADDRESS)
-    struct.pack_into(">I", header, dolfile.OFF_SECTION_SIZES + data_slot * 4,
-                     len(data))
-
-    struct.pack_into(">I", header, dolfile.OFF_ENTRY, entry)
-    struct.pack_into(">I", header, dolfile.OFF_BSS_ADDRESS, 0x80500000)
-    struct.pack_into(">I", header, dolfile.OFF_BSS_SIZE, 0x1000)
-    return bytes(header) + text + data
 
 
 class ParseTests(unittest.TestCase):
@@ -239,112 +198,6 @@ class IdentifierTests(unittest.TestCase):
     def test_same_address_twice_is_no_collision(self):
         report = symbolmap.parse("alias=0x80003100\nalias2=0x80003200\n")
         self.assertEqual(symbolmap.identifier_collisions(report.accepted), {})
-
-
-class DolTests(unittest.TestCase):
-    def _write(self, directory: str, **kwargs) -> Path:
-        path = Path(directory) / "main.dol"
-        path.write_bytes(build_dol(**kwargs))
-        return path
-
-    def test_reads_sections_and_entry(self):
-        with TemporaryDirectory() as tmp:
-            binary = dolfile.read(self._write(tmp))
-        self.assertEqual(binary.entry, TEXT_ADDRESS)
-        self.assertEqual(len(binary.text_sections), 1)
-        self.assertEqual(len(binary.sections), 2)
-
-    def test_classifies_addresses_by_section(self):
-        with TemporaryDirectory() as tmp:
-            binary = dolfile.read(self._write(tmp))
-        self.assertTrue(binary.section_of(TEXT_ADDRESS).executable)
-        self.assertFalse(binary.section_of(DATA_ADDRESS).executable)
-        self.assertIsNone(binary.section_of(0x80500000))
-
-    def test_reads_words_big_endian_and_stops_at_the_edge(self):
-        with TemporaryDirectory() as tmp:
-            binary = dolfile.read(self._write(tmp, text_words=[MFLR, BLR]))
-        self.assertEqual(binary.word_at(TEXT_ADDRESS), MFLR)
-        self.assertEqual(binary.word_at(TEXT_ADDRESS + 4), BLR)
-        self.assertIsNone(binary.word_at(TEXT_ADDRESS + 8))
-
-    def test_rejects_a_file_that_is_too_small(self):
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "short.dol"
-            path.write_bytes(b"\0" * 16)
-            with self.assertRaises(dolfile.DolError) as caught:
-                dolfile.read(path)
-        self.assertIn("zu klein", str(caught.exception))
-
-    def test_rejects_a_section_outside_the_file(self):
-        with TemporaryDirectory() as tmp:
-            raw = bytearray(build_dol())
-            struct.pack_into(">I", raw, dolfile.OFF_SECTION_SIZES, 0x1000000)
-            path = Path(tmp) / "broken.dol"
-            path.write_bytes(bytes(raw))
-            with self.assertRaises(dolfile.DolError) as caught:
-                dolfile.read(path)
-        self.assertIn("beschaedigt", str(caught.exception))
-
-    def test_rejects_a_dol_without_executable_section(self):
-        with TemporaryDirectory() as tmp:
-            raw = bytearray(build_dol())
-            struct.pack_into(">I", raw, dolfile.OFF_SECTION_SIZES, 0)
-            path = Path(tmp) / "nocode.dol"
-            path.write_bytes(bytes(raw))
-            with self.assertRaises(dolfile.DolError):
-                dolfile.read(path)
-
-    def test_counts_free_text_slots(self):
-        with TemporaryDirectory() as tmp:
-            one = dolfile.read(self._write(tmp, text_slots=1))
-        self.assertEqual(len(dolfile.free_text_slots(one)),
-                         dolfile.TEXT_SECTIONS - 1)
-        with TemporaryDirectory() as tmp:
-            two = dolfile.read(self._write(tmp, text_slots=2))
-        self.assertEqual(len(dolfile.free_text_slots(two)),
-                         dolfile.TEXT_SECTIONS - 2)
-
-
-class MeasurementTests(unittest.TestCase):
-    def test_recognises_prologue_and_terminator(self):
-        # blr, dann stwu: die zweite Adresse ist ein glaubhafter Funktionsanfang.
-        words = [MFLR, BLR, STWU, BLR]
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "main.dol"
-            path.write_bytes(build_dol(text_words=words))
-            binary = dolfile.read(path)
-        result = dolfile.measure(binary, [TEXT_ADDRESS, TEXT_ADDRESS + 8])
-        self.assertEqual(result.sampled, 2)
-        self.assertEqual(result.prologue, 2)          # mflr und stwu
-        self.assertEqual(result.preceded_by_terminator, 1)  # nur vor stwu ein blr
-
-    def test_ignores_addresses_outside_text(self):
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "main.dol"
-            path.write_bytes(build_dol())
-            binary = dolfile.read(path)
-        self.assertEqual(dolfile.measure(binary, [DATA_ADDRESS, 0x80500000]).sampled, 0)
-
-    def test_nop_counts_as_terminator_but_not_prologue(self):
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "main.dol"
-            path.write_bytes(build_dol(text_words=[ORI_NOP, MFLR]))
-            binary = dolfile.read(path)
-        result = dolfile.measure(binary, [TEXT_ADDRESS + 4])
-        self.assertEqual(result.preceded_by_terminator, 1)
-        self.assertEqual(result.prologue, 1)
-
-    def test_control_sample_is_aligned_inside_text_and_repeatable(self):
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "main.dol"
-            path.write_bytes(build_dol())
-            binary = dolfile.read(path)
-        sample = dolfile.control_sample(binary, 50)
-        self.assertEqual(len(sample), 50)
-        self.assertTrue(all(address % 4 == 0 for address in sample))
-        self.assertTrue(all(binary.section_of(a).executable for a in sample))
-        self.assertEqual(sample, dolfile.control_sample(binary, 50))
 
 
 class VendoredMapTests(unittest.TestCase):
