@@ -238,16 +238,33 @@ def memory_map(dol: Dol) -> list[Region]:
 def gaps(dol: Dol) -> list[Region]:
     """Luecken zwischen den belegten Bereichen.
 
+    Bereiche koennen einander ueberlappen und tun das bei Sunshine auch: Der
+    im Kopf genannte BSS-Bereich spannt von .bss bis .sbss und schliesst
+    dazwischenliegende Datensektionen ein. Wer nur aufeinanderfolgende
+    Eintraege vergleicht, meldet deshalb Luecken, die in Wirklichkeit BSS sind.
+    Deshalb werden die Bereiche erst verschmolzen.
+
     Nur ein Hinweis, keine Freigabe: Der Spielheap und zur Laufzeit angelegte
     Puffer stehen in keinem DOL-Kopf. Ob eine Luecke wirklich frei bleibt, zeigt
     erst das laufende Spiel.
     """
-    result: list[Region] = []
     regions = memory_map(dol)
-    for previous, following in zip(regions, regions[1:]):
-        if following.start > previous.end:
-            result.append(Region(previous.end, following.start,
-                                 f"zwischen {previous.label} und {following.label}"))
+    if not regions:
+        return []
+
+    merged: list[list] = []
+    for region in regions:
+        if merged and region.start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], region.end)
+            merged[-1][2].append(region.label)
+        else:
+            merged.append([region.start, region.end, [region.label]])
+
+    result: list[Region] = []
+    for previous, following in zip(merged, merged[1:]):
+        if following[0] > previous[1]:
+            result.append(Region(previous[1], following[0],
+                                 f"zwischen {previous[2][-1]} und {following[2][0]}"))
     return result
 
 

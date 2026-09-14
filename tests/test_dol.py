@@ -151,6 +151,20 @@ class MemoryMapTests(unittest.TestCase):
                 self.assertFalse(hole.start < region.end and region.start < hole.end)
 
 
+    def test_a_region_inside_another_is_no_gap(self):
+        # Wie bei Sunshine: BSS spannt ueber eine dazwischenliegende
+        # Datensektion. Ohne Verschmelzen entstuende hier eine Schein-Luecke,
+        # und ein Codebereich landete mitten in BSS.
+        with TemporaryDirectory() as tmp:
+            binary = dolfile.read(write_dol(
+                tmp, bss_address=DATA_ADDRESS - 0x1000,
+                bss_size=0x2000))
+        for hole in dolfile.gaps(binary):
+            for region in dolfile.memory_map(binary):
+                self.assertFalse(hole.start < region.end and region.start < hole.end,
+                                 f"Luecke {hole} liegt in {region}")
+
+
 class BranchTests(unittest.TestCase):
     def test_encodes_forward_and_backward(self):
         self.assertEqual(dolfile.branch(0x80000000, 0x80000100), 0x48000100)

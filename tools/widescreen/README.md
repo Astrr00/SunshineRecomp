@@ -102,19 +102,31 @@ interpretiertem und nativem Widescreen.
 Das synthetische DOL ist kein Ersatz fuer die eigene Spielkopie: Sektionsgrenzen
 und die Frage BSS oder Daten entscheidet erst das echte Hauptprogramm.
 
+### An der echten main.dol wiederholt
+
+Am 2026-09-14 mit der Spielkopie des Auftraggebers:
+
+| Gegenstand | Ergebnis |
+|---|---|
+| Schreibungen | 13 von 13 angewandt, keine in BSS |
+| Einfuegungen | 12, Codebereich `0x80417800`, 70 Worte |
+| Verdraengte Anweisung im Rumpf bewahrt | 12 von 12 |
+| Rekompilat | text2 mit 70 Anweisungen, 70 bekannt, 0 unbekannt; 222 statt 221 Chunks |
+| Geaenderte Chunks | 7, darunter `802C9600` und `80361600` -- genau die beiden, die im Gecko-Lauf im SMC-Rueckfall liefen |
+
+Damit ist belegt, dass die Widescreen-Aenderungen nativ mitrekompiliert werden
+statt interpretiert. Einzelheiten und Grenzen in
+[../../docs/09-DOL-BEFUNDE.md](../../docs/09-DOL-BEFUNDE.md).
+
 ## Zwei Stellen, die im Voraus nicht entscheidbar sind
 
-**Schreibziele in BSS.** Drei der 13 Schreibungen zielen auf `0x80416620`,
-`0x80416758` und `0x80416B74`. Ob diese Adressen in einer Datensektion liegen
-oder in BSS, haengt vom echten DOL ab und ist hier nicht geprueft. BSS steht
-nicht in der Datei: Was dort liegt, laesst sich nicht einbacken, sondern nur zur
-Laufzeit setzen. `plan` und `bake` ordnen jede Adresse ein und lehnen ab, statt
-stillschweigend etwas auszulassen. Fuer die abgelehnten Werte ist der Mod aus
-WP9 der Weg.
-
-Ein Anhaltspunkt: `0x80412408` trug vor dem Patch `3FAAAAAB`, also 1,3333
-(Dokument 03). Ein von Null verschiedener Anfangswert spricht fuer eine
-Datensektion. Fuer die drei anderen liegt nichts Vergleichbares vor.
+**Schreibziele in BSS: erledigt.** Die Sorge war, dass `0x80416620`,
+`0x80416758` und `0x80416B74` in BSS liegen und sich dann nicht einbacken
+liessen. Am 2026-09-14 an der echten `main.dol` geprueft: **Alle 13
+Schreibziele liegen in der Datei**, die drei genannten in `data14`
+(`0x8040EBA0-0x80417800`). Anforderung 3 braucht dafuer also keinen
+Laufzeit-Mod. Die Einordnung bleibt trotzdem im Werkzeug, weil sie fuer andere
+Codes und andere Fassungen gilt.
 
 **Adresse des Codebereichs.** Der DOL-Kopf kennt die geladenen Sektionen und
 BSS, aber nicht den Heap des Spiels. Das Werkzeug prueft gegen alles Bekannte

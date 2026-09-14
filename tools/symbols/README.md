@@ -181,5 +181,16 @@ Kontrolle, treffen die Adressen echte Funktionsgrenzen. Das ist ein **Indiz,
 kein Beweis** der Uebereinstimmung mit dieser Spielkopie, und wird auch so
 ausgegeben. Der Zufallsstartwert ist fest, der Vergleich also wiederholbar.
 
-Die Werte dieser Pruefung sind noch nicht erhoben; dafuer fehlt in der
-Sitzung, in der dieses Werkzeug entstanden ist, die Spielkopie.
+Am 2026-09-14 an der echten `main.dol` ausgefuehrt
+(`13934c86…`, 4.128.928 Bytes):
+
+| Gegenstand | Ergebnis |
+|---|---|
+| `__start` gegen Eintrittspunkt | stimmt, `0x8000522C` |
+| Symbole in Textsektionen | 12.335 |
+| in Datensektionen | 2.210 |
+| ausserhalb (BSS oder unbelegt) | 538 |
+| Funktionsprolog | 77,2 % gegen 2,2 % im Zufall |
+| Funktionsende davor | 99,9 % gegen 10,9 % im Zufall |
+
+Einzelheiten in [../../docs/09-DOL-BEFUNDE.md](../../docs/09-DOL-BEFUNDE.md).
