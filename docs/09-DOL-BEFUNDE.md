@@ -27,14 +27,27 @@ Die Groesse des RVZ deckt sich mit der Angabe in
 [02-STATUS.md](02-STATUS.md); es ist dieselbe Datei wie bei den frueheren
 Sitzungen.
 
-**Beleg, dass die Entpackung stimmt:** Die gewonnene `main.dol` ist
-4.128.928 Bytes gross und hat SHA-256
-`13934c863d649b1ddca1ca4d7748f49d28a571685cbee5fb1542545c32869955`. Genau
-dieser Wert steht seit dem 2026-09-10 in
-[../scripts/build.ps1](../scripts/build.ps1) als
-`MODERNGEKKO_REQUIRED_DOL_SHA256`, dort an einer Extraktion durch Dolphin
-gewonnen. Zwei unabhaengige Wege, dasselbe Ergebnis. Der Eintrittspunkt
-`0x8000522C` stimmt ebenfalls mit `moderngekko-port inspect` ueberein.
+**Beleg, dass die Entpackung stimmt.** Drei voneinander unabhaengige
+Pruefungen, alle bestanden:
+
+1. **Das Hauptprogramm.** Die gewonnene `main.dol` ist 4.128.928 Bytes gross,
+   SHA-256 `13934c863d649b1ddca1ca4d7748f49d28a571685cbee5fb1542545c32869955`.
+   Genau dieser Wert steht seit dem 2026-09-10 in
+   [../scripts/build.ps1](../scripts/build.ps1) als
+   `MODERNGEKKO_REQUIRED_DOL_SHA256`, dort an einer Extraktion durch Dolphin
+   gewonnen. Der Eintrittspunkt `0x8000522C` deckt sich mit
+   `moderngekko-port inspect`.
+2. **Das vollstaendige Abbild.** Vollstaendig entpackt ergibt sich
+   `67cec1634e641227a4cd51e6a0b277730cb9a1adaa867530c9e66de45373e51d` bei
+   1.459.978.240 Bytes -- die Pruefsumme der Originaldisc aus
+   [../tools/import/importer.py](../tools/import/importer.py), am 2026-09-09 an
+   einer echten Kopie bestaetigt. Damit ist **jedes** der 1,46 Milliarden Bytes
+   belegt, einschliesslich der 271 MiB, die RVZ nicht speichert, sondern ueber
+   den Zufallsgenerator nachrechnet.
+3. **Die eigene Einrichtung.** `python tools/import` auf dieses Abbild
+   angesetzt: erkannt als "Super Mario Sunshine (USA, Rev 0)", Integritaet
+   bestaetigt, 174 Dateien entpackt. Das daraus gewonnene `sys/main.dol` ist
+   byteidentisch mit dem direkt gelesenen.
 
 ## Aufbau der main.dol
 
