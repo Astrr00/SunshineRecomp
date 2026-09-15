@@ -19,7 +19,22 @@ auftaucht):
 | [10-KOPFLOSER-PRUEFSTAND.md](10-KOPFLOSER-PRUEFSTAND.md) | kopfloser Prüfstand; Arena- und Stapelfrage beantwortet; Gecko-Weg gegen eingebacken |
 | [11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md) | WP13 abgeschlossen: Zuordnung 96–100 %, Zwischenbild gerendert, Schnitterkennung kalibriert |
 | [12-TON.md](12-TON.md) | WP1: Ton gemessen, keine Zeitbasisabweichung |
-| [13-STATISCHER-KERN.md](13-STATISCHER-KERN.md) | **wichtig:** das Rekompilat führt höchstens 0,18 % der Gasttakte aus; Ursache gemessen |
+| [13-STATISCHER-KERN.md](13-STATISCHER-KERN.md) | das Rekompilat führt höchstens 0,18 % der Gasttakte aus; Ursache gemessen (am 15.09. in zwei Punkten berichtigt) |
+
+**Am 2026-09-15 abends, in derselben entfernten Sitzung, dazugekommen** — das
+ist der aktuelle Stand und der beste Einstieg:
+
+| Dokument | Ergebnis |
+|---|---|
+| [16-RUECKWEG.md](16-RUECKWEG.md) | **Der Kern läuft jetzt nativ.** Der Ersatz-JIT hatte den Dispatcher nie verlassen; ein Rückweg an den Ausnahme-Ausgängen senkt seinen Anteil an den Gasttakten von 99,99 % auf 0,015 %. Beide Abnahmeszenarien bestehen weiter. Preis: 1,27-mal langsamer als der Ersatz-JIT, nach einer ersten Verbesserung um 52 % |
+| [17-LOCKSTEP.md](17-LOCKSTEP.md) | **Der Verifizierer läuft erstmals.** Von 116 gemeldeten Abweichungen kamen 112 aus seiner eigenen Halteregel, die übrigen 4 aus einem Verbuchungsunterschied. In keiner steht ein Rechenfehler des Rekompilats |
+| [18-SKALIERER.md](18-SKALIERER.md) | Ausgabe-Skalierer als Produktfunktion: neun Kerne, zwei davon erstmals erreichbar. Interner Faktor 6 rendert 3840×2688, also mehr als 4K. Die Bildwirkung des Skalierers braucht ein echtes Fenster und steht aus |
+| [19-ULTRAWIDE.md](19-ULTRAWIDE.md) | Das Seitenverhältnis steht in genau einem Wort des Widescreen-Codes (`0x80412408`). `tools/widescreen bake --aspect` macht es einstellbar; 4:3, 16:9, 64:27 und 32:9 sind erzeugt |
+
+**Wichtig für die nächste Sitzung:** Der Rückweg ist ausdrücklich zu schalten
+(`STATICRECOMP_YIELD=1`) und **nicht** Voreinstellung — erst wenn die vier
+verbliebenen Lockstep-Meldungen geklärt sind, darf er das werden. Die
+Bedingung steht in [16](16-RUECKWEG.md).
 
 Neue Werkzeuge im Repository: `tools/symbols`, `tools/widescreen`,
 `tools/framerate`, `tools/audio`, `tools/acceptance` (Abnahmelauf nach
