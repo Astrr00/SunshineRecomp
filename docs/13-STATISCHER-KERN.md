@@ -146,6 +146,29 @@ Blocksuche `g_static_recomp_core->DispatchableAt(pc)` und kehrt dann mit
 direkt und ruft `Dispatch()` nur bei einem Fehlschlag der schnellen Suche.
 Über 3.000 Bilder geschah das genau einmal.
 
+## Der Lockstep-Verifizierer steht nicht zur Verfügung
+
+[PLAN.md](PLAN.md), Abschnitt 2.5, benennt den in RecompCore vorhandenen
+Lockstep-Verifizierer als das Mittel, um Recompilationsfehler von
+Spielverhalten zu trennen. Mit dem gebauten Modul geht das nicht:
+
+```
+[lockstep] module lacks ppc_set_mem_write_journal export;
+           lockstep DISABLED (rebuild the module).
+```
+
+`ppc_set_mem_write_journal` gibt es in DolRecomps Laufzeit (`src/cpu/cpu.c:14`,
+`src/cpu/cpu.h:130`), aber das fertige Modul exportiert es nicht: `nm -D`
+findet genau eine exportierte Funktion, und diese ist nicht dabei.
+`StaticRecompLockstep.cpp:60` sucht sie über `GetSymbolAddress` und schaltet
+sonst ab. Ein Modulbau dauert rund 70 Minuten
+([09-DOL-BEFUNDE.md](09-DOL-BEFUNDE.md)); ein Lauf mit passend gebautem Modul
+steht noch aus.
+
+Solange das so bleibt, gibt es kein Mittel, die Richtigkeit nativ
+ausgeführten Codes zu prüfen — auch nicht für die 682 Blöcke, die tatsächlich
+laufen.
+
 ## Warum der statische Kern langsamer ist
 
 `SetStaticRecompFallback(true)` (`JitBase.h:207-217`) schaltet im Ersatz-JIT
