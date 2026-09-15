@@ -467,6 +467,13 @@ Beleg: Stichprobenprotokoll, erzeugter Symbolheader.
 
 Beleg: Bildmatrix mit Messprotokoll; Log ohne Fallback der Chunks.
 
+> Stand 2026-09-15: Schritt 4 belegt ([15-WIDESCREEN-ABNAHME.md](15-WIDESCREEN-ABNAHME.md)).
+> Senkrechter Maßstab bitgleich, waagerechter mal 0,757, Sichtverhältnis exakt
+> 16/9, HUD unverzerrt und an der Bildkante verankert, keine Zeichenbefehle
+> verloren. Offen: Culling in offenen Szenen, Effekte, weitere HUD-Elemente.
+> Nebenbefund für WP11: Die Filmprojektion ist unverändert, Filme werden bei
+> 16:9 gestreckt.
+
 ### WP9 Ultrawide 21:9 und 32:9 (M–L)
 
 1. Aspektabhängige Konstanten des Codes bestimmen: Seitenverhältnis

@@ -15,7 +15,7 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 |---|---|---|---|---|
 | 1 | Unbegrenzte Framerate | Spike abgeschlossen | Zuordnung der Zeichenbefehle 96–100 %, Bewegung steckt in den Matrizen, synthetisches Zwischenbild gerendert und geprüft, Schnitterkennung kalibriert ([11](11-FRAMERATE-SPIKE.md)) | Umsetzung (WP14); Gegenschnitt in gleicher Szene; Kosten auf echter GPU; Entscheidung des Auftraggebers zu PLAN 5.4 |
 | 2 | Hohe Auflösung, getrennte Ausgabe | weitgehend erledigt | `internal_scale` 1–12 und `output_resolution` getrennt gemessen; randloses Vollbild 1920x1080 und 3440x1440 ([07](07-ANZEIGE.md)) | HiDPI, Mehrmonitor, Launcher-Bedienung, Kantenglättung als Option |
-| 3 | Echtes Widescreen | Grundlage steht | 25/25 Patchstellen im RAM; zusätzliche Sicht ohne Streckung; in das DOL eingebacken, kein SMC-Rückfall ([03](03-WIDESCREEN.md), [09](09-DOL-BEFUNDE.md), [10](10-KOPFLOSER-PRUEFSTAND.md)) | Bildabnahme (HUD, Effekte, Culling), Filme, 21:9 und 32:9; ob der Code nativ oder im JIT läuft, ist offen ([13](13-STATISCHER-KERN.md)) |
+| 3 | Echtes Widescreen | **Kern abgenommen** | 25/25 Patchstellen im RAM; in das DOL eingebacken, kein SMC-Rückfall; senkrechter Maßstab bitgleich, waagerechter mal 0,757, Sichtverhältnis exakt 16/9, HUD am Bildrand verankert und unverzerrt ([03](03-WIDESCREEN.md), [09](09-DOL-BEFUNDE.md), [10](10-KOPFLOSER-PRUEFSTAND.md), [15](15-WIDESCREEN-ABNAHME.md)) | Filme werden gestreckt (Projektion unverändert, [15](15-WIDESCREEN-ABNAHME.md)); Culling, Effekte und weitere HUD-Elemente; 21:9 und 32:9; ob der Code nativ oder im JIT läuft, ist offen ([13](13-STATISCHER-KERN.md)) |
 | 4 | HUD-Anker, Menüs, Sequenzen | nicht begonnen | nur mittelbar über die 2D-Konstanten des Gecko-Codes | alles; Adressbasis steht jetzt zur Verfügung (WP7) |
 | 5 | Windows-Anwendung | halb | Win32-Fenster, randloses Vollbild, Alt+Enter, DPI; Launcher gebaut; RVZ-Import 179/179 byteidentisch ([08](08-WINDOWS-ROM-CONTROLLER.md)) | Launcher nie visuell bedient; kein Modulbau im Launcher; kein Paket |
 | 7 | Analoge Schultertaste, Belegung | Produktseite offen | Halb- und Voll-R unterschieden (0 gegen 542,793 Einheiten) ([05](05-FIFO-UND-FLUDD.md)) | reale Controller, Belegungsoberfläche, Totzonen, Tastatur/Maus, Hotplug |
@@ -34,10 +34,10 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 | WP5 | Stabilität | teilweise | Stapeltiefe über 30.000 Frames gemessen ([11](11-FRAMERATE-SPIKE.md)); Dauerlauf offen |
 | WP6 | Abnahmelauf | **Grundgeruest steht** | `tools/acceptance` mit zwei Szenarien; `boot` (10/10) und `spielstart` (9/9) am echten Spiel bestanden, 13 Tests ohne Spielkopie ([README](../tools/acceptance/README.md)) |
 | WP7 | Adressbasis | **erledigt** | `tools/symbols`, 12.573/12.573 Bezeichner gegengeprüft ([09](09-DOL-BEFUNDE.md)) |
-| WP8 | 16:9 im Rekompilat | Schritte 1–3 belegt | `tools/widescreen`, gebackenes DOL läuft ohne SMC-Rückfall ([09](09-DOL-BEFUNDE.md), [10](10-KOPFLOSER-PRUEFSTAND.md)); Bildabnahme offen |
+| WP8 | 16:9 im Rekompilat | **Schritte 1–4 belegt** | `tools/widescreen`, gebackenes DOL ohne SMC-Rückfall, Bildabnahme an Projektion und Bild ([15](15-WIDESCREEN-ABNAHME.md)); offen: Culling, Effekte, Filme |
 | WP9 | Ultrawide | nicht begonnen | — |
 | WP10 | HUD, Menüs, Sequenzen | nicht begonnen | — |
-| WP11 | Filme | nicht begonnen | — |
+| WP11 | Filme | Befund liegt vor | die Filmprojektion ist vom Widescreen-Code unberührt, bei 16:9 also gestreckt ([15](15-WIDESCREEN-ABNAHME.md)) |
 | WP12 | Feinschliff | nicht begonnen | — |
 | WP13 | Framerate-Spike | **abgeschlossen** | [11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md) |
 | WP14 | Framerate-Umsetzung | wartet auf Entscheidung | PLAN 5.4 |
@@ -74,6 +74,7 @@ wird.
 | [12](12-TON.md) | Ton gemessen |
 | [13](13-STATISCHER-KERN.md) | wie viel wirklich aus dem Rekompilat läuft |
 | [14](14-FRAGE-AN-MODERNGEKKO.md) | die daraus folgende Frage an ModernGekko, vorbereitet |
+| [15](15-WIDESCREEN-ABNAHME.md) | Widescreen an Projektion und Bild abgenommen |
 
 Die frühere Chronik dieses Dokuments ist in die Matrizen oben aufgegangen. Was
 darunter folgt, sind die Messwerte der Windows-Sitzungen; sie bleiben als
