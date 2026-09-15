@@ -1,0 +1,81 @@
+Lokale Messhilfe, nicht Teil des Baus (siehe docs/13-STATISCHER-KERN.md).
+Anwenden im ausgecheckten RecompCore-Baum:
+    git apply --directory=Source/Core/Core/PowerPC/StaticRecomp tools/diagnostics/staticrecomp-dispatch-probe.patch
+Sie zaehlt, wie oft und warum DispatchableAt eine Adresse ablehnt, und gibt
+die Zaehler beim Herunterfahren als [sr-probe]-Zeile aus.
+
+--- a/StaticRecompCore_SMC.cpp
++++ b/StaticRecompCore_SMC.cpp
+@@ -243,21 +243,52 @@
+          m_chunk_state[index] == CHUNK_VERIFIED;
+ }
+ 
++// Lokale Messung (SunshineRecomp, 2026-09-15): zaehlt, warum DispatchableAt
++// ablehnt. Nicht fuer den Upstream gedacht.
++unsigned long long g_sr_probe_total = 0, g_sr_probe_forced = 0, g_sr_probe_nochunk = 0,
++                   g_sr_probe_hostcall = 0, g_sr_probe_unverified = 0, g_sr_probe_ok = 0;
++unsigned int g_sr_probe_first_bad_chunk = 0xFFFFFFFFu;
++unsigned int g_sr_probe_last_bad_pc = 0;
++
+ bool StaticRecompCore::DispatchableAt(u32 address)
+ {
++  ++g_sr_probe_total;
+   RefreshHostCalls();
+   if (!m_forced_fallback_ranges.empty() && IsForcedFallbackAddress(address))
++  {
++    ++g_sr_probe_forced;
+     return false;
++  }
+   const int index = ChunkIndexOf(address);
+-  if (index < 0 || ChunkContainsHostCall(static_cast<u32>(index)))
++  if (index < 0)
++  {
++    ++g_sr_probe_nochunk;
++    g_sr_probe_last_bad_pc = address;
++    return false;
++  }
++  if (ChunkContainsHostCall(static_cast<u32>(index)))
++  {
++    ++g_sr_probe_hostcall;
++    g_sr_probe_last_bad_pc = address;
++    if (g_sr_probe_first_bad_chunk == 0xFFFFFFFFu)
++      g_sr_probe_first_bad_chunk = static_cast<unsigned int>(index);
+     return false;
++  }
+   ++m_smc_probe_clock;
+   if (m_chunk_state[index] == CHUNK_UNVERIFIED)
+     VerifyChunk(static_cast<u32>(index));
+   else if (m_chunk_state[index] == CHUNK_FAILED &&
+            m_smc_probe_clock >= m_chunk_retry_after[index])
+     VerifyChunk(static_cast<u32>(index));
+-  return m_chunk_state[index] == CHUNK_VERIFIED;
++  const bool ok = m_chunk_state[index] == CHUNK_VERIFIED;
++  if (ok)
++    ++g_sr_probe_ok;
++  else
++  {
++    ++g_sr_probe_unverified;
++    g_sr_probe_last_bad_pc = address;
++  }
++  return ok;
+ }
+ 
+ bool StaticRecompCore::IsForcedFallbackAddress(u32 address) const
+--- a/StaticRecompCore.cpp
++++ b/StaticRecompCore.cpp
+@@ -237,6 +237,15 @@
+                (unsigned long long)m_hook_fallback_instructions, m_failed_chunks,
+                (unsigned long long)m_verifications, (unsigned long long)m_reverify_events,
+                (unsigned long long)m_bursts, (unsigned long long)m_charged_cycles);
++  extern unsigned long long g_sr_probe_total, g_sr_probe_forced, g_sr_probe_nochunk,
++      g_sr_probe_hostcall, g_sr_probe_unverified, g_sr_probe_ok;
++  extern unsigned int g_sr_probe_first_bad_chunk, g_sr_probe_last_bad_pc;
++  std::fprintf(stderr,
++               "[sr-probe] dispatchable_at: total=%llu ok=%llu forced=%llu nochunk=%llu "
++               "hostcall=%llu unverified=%llu first_bad_chunk=%u last_bad_pc=%08x\n",
++               g_sr_probe_total, g_sr_probe_ok, g_sr_probe_forced, g_sr_probe_nochunk,
++               g_sr_probe_hostcall, g_sr_probe_unverified, g_sr_probe_first_bad_chunk,
++               g_sr_probe_last_bad_pc);
+   std::vector<std::pair<u32, u64>> dispatch_samples(m_dispatch_samples.begin(),
+                                                     m_dispatch_samples.end());
+   std::sort(dispatch_samples.begin(), dispatch_samples.end(),

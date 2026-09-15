@@ -15,7 +15,19 @@ sys.path.insert(0, str(PROJECT))
 from scripts.automation import send, read_status
 
 
-def snapshot(automation, game, boss_address=None):
+# Die Arena ist der Bereich, aus dem das Spiel seinen Speicher nimmt. Ihre
+# Grenzen stehen in diesen beiden Zeigern; die Namen stammen aus der
+# Symbolliste (tools/symbols), die Werte setzt das Spiel beim Start.
+#
+# Gebraucht fuer WP8: Der eingebackene Widescreen-Codebereich liegt hinter dem
+# geladenen Abbild. Beginnt die Arena dort, ueberschreibt ihn das Spiel. Im DOL
+# ist die Untergrenze nicht als Konstante zu finden (nachgesucht, siehe
+# docs/09-DOL-BEFUNDE.md), sie muss also am laufenden Spiel gelesen werden.
+ARENA_LO = 0x8040CE48
+ARENA_HI = 0x8040E798
+
+
+def snapshot(automation, game, boss_address=None, cave_address=None):
     automation = Path(automation).resolve()
     boot = (Path(game) / "sys/boot.bin").read_bytes()
     if boot[:6] != b"GMSE01" or boot[7] != 0:
@@ -46,6 +58,15 @@ def snapshot(automation, game, boss_address=None):
     result = {"frame_at_start": int(status["frame_count"]), "mario_address": hex(mario),
               "position": vec(data, 0x10), "yaw_degrees": struct.unpack_from(">f", data, 0x34)[0],
               "evidence": str(output), "core_state_at_start": status["state"]}
+    arena_lo = u32(read(ARENA_LO, 4, "arena-lo"))
+    arena_hi = u32(read(ARENA_HI, 4, "arena-hi"))
+    result["arena"] = {"lo": hex(arena_lo), "hi": hex(arena_hi),
+                       "size": arena_hi - arena_lo}
+    if cave_address is not None:
+        # Ein Bereich unterhalb der Arena-Untergrenze bleibt vom Spielheap
+        # unberuehrt. Das ist die Bedingung, die WP8 braucht.
+        result["arena"]["cave_address"] = hex(cave_address)
+        result["arena"]["cave_below_arena"] = cave_address < arena_lo
     gun = u32(data, 0x3E4)
     if gun:
         owner = u32(read(gun + 8, 4, "gun-owner"))
@@ -75,5 +96,9 @@ if __name__ == "__main__":
     parser.add_argument("--automation", required=True, type=Path)
     parser.add_argument("--game", type=Path, default=PROJECT / "build/game")
     parser.add_argument("--boss-address", type=lambda x: int(x, 0))
+    parser.add_argument("--cave-address", type=lambda x: int(x, 0),
+                        help="Adresse des eingebackenen Codebereichs; wird "
+                             "gegen die Arena-Untergrenze geprueft")
     args = parser.parse_args()
-    print(json.dumps(snapshot(args.automation, args.game, args.boss_address), indent=2))
+    print(json.dumps(snapshot(args.automation, args.game, args.boss_address,
+                              args.cave_address), indent=2))

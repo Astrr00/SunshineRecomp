@@ -1,0 +1,45 @@
+Zweite lokale Messhilfe, nicht Teil des Baus (siehe docs/13-STATISCHER-KERN.md).
+Sie macht zwei Wege ueber Umgebungsvariablen schaltbar:
+  STATICRECOMP_CDISPATCH=1     jede Blocksuche laeuft ueber JitBaseBlockCache::Dispatch,
+                               also ueber die Rueckfrage an den statischen Kern
+  STATICRECOMP_NO_BLOCKLINK=1  der Ersatz-JIT verkettet seine Bloecke nicht
+Ergebnis des Versuchs steht im Dokument: mit CDISPATCH wurde in 1447 s kein
+einziges Bild ausgegeben (ohne: 22 s bis Bild 30).
+
+--- a/Jit64/JitAsm.cpp
++++ b/Jit64/JitAsm.cpp
+@@ -1,6 +1,7 @@
+ // Copyright 2008 Dolphin Emulator Project
+ // SPDX-License-Identifier: GPL-2.0-or-later
+ 
++#include <cstdlib>
+ #include "Core/PowerPC/Jit64/JitAsm.h"
+ 
+ #include <climits>
+@@ -107,7 +108,11 @@
+   dispatcher_no_check = GetCodePtr();
+ 
+   // The following is a translation of JitBaseBlockCache::Dispatch into assembly.
+-  const bool assembly_dispatcher = true;
++  // Lokale Messung (SunshineRecomp): Der Assembler-Dispatcher erledigt Treffer
++  // selbst und umgeht damit JitBaseBlockCache::Dispatch -- und mit ihr die
++  // Rueckfrage an den statischen Kern. Mit STATICRECOMP_CDISPATCH=1 laeuft
++  // jede Blocksuche ueber die C++-Fassung.
++  const bool assembly_dispatcher = std::getenv("STATICRECOMP_CDISPATCH") == nullptr;
+   if (assembly_dispatcher)
+   {
+     if (m_jit.GetBlockCache()->GetEntryPoints())
+--- a/StaticRecomp/StaticRecompCore.cpp
++++ b/StaticRecomp/StaticRecompCore.cpp
+@@ -212,6 +212,11 @@
+   m_lockstep_verifier = std::make_unique<StaticRecompLockstep::StaticRecompLockstepVerifier>(*this);
+   m_lockstep_verifier->Init();
+ 
++  // Lokale Messung (SunshineRecomp): Ohne Blockverkettung endet jeder Block im
++  // Dispatcher, der dann (zusammen mit STATICRECOMP_CDISPATCH) den statischen
++  // Kern wieder fragen kann.
++  if (std::getenv("STATICRECOMP_NO_BLOCKLINK"))
++    SConfig::GetInstance().bJITNoBlockLinking = true;
+ #ifdef _M_ARM_64
+   m_fallback_jit = std::make_unique<JitArm64>(m_system);
+ #elif defined(_M_X86_64)

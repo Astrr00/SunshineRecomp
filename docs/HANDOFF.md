@@ -1,7 +1,29 @@
 # Übergabe: Nativer Super-Mario-Sunshine-Port für Windows
 
-Stand: 2026-09-09. Dieses Dokument ist die vollständige Übergabe. Es setzt kein
-Vorwissen aus der bisherigen Sitzung voraus.
+Stand: 2026-09-09, Kopf fortgeschrieben am 2026-09-15. Dieses Dokument ist die
+Übergabe der Windows-Sitzungen. Es setzt kein Vorwissen voraus.
+
+**Wo der aktuelle Stand steht:** [PLAN.md](PLAN.md) legt Leitentscheidungen,
+Reihenfolge, Arbeitspakete und die offenen Entscheidungen des Auftraggebers
+fest. [02-STATUS.md](02-STATUS.md) ist die Anforderungsmatrix: Stand je
+Anforderung und je Arbeitspaket, jeweils mit Verweis auf das Belegprotokoll.
+Beide sind neuer als der Rest dieses Dokuments.
+
+**Seit dem 2026-09-14 in entfernten Sitzungen entstanden** (Linux, mit einer
+vom Auftraggeber bereitgestellten Spielkopie, die im Repository nicht
+auftaucht):
+
+| Dokument | Ergebnis |
+|---|---|
+| [09-DOL-BEFUNDE.md](09-DOL-BEFUNDE.md) | DOL-Aufbau vermessen, Symbolkarte übernommen und gegengeprüft, Widescreen in das DOL gebacken |
+| [10-KOPFLOSER-PRUEFSTAND.md](10-KOPFLOSER-PRUEFSTAND.md) | kopfloser Prüfstand; Arena- und Stapelfrage beantwortet; Gecko-Weg gegen eingebacken |
+| [11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md) | WP13 abgeschlossen: Zuordnung 96–100 %, Zwischenbild gerendert, Schnitterkennung kalibriert |
+| [12-TON.md](12-TON.md) | WP1: Ton gemessen, keine Zeitbasisabweichung |
+| [13-STATISCHER-KERN.md](13-STATISCHER-KERN.md) | **wichtig:** das Rekompilat führt höchstens 0,18 % der Gasttakte aus; Ursache gemessen |
+
+Neue Werkzeuge im Repository: `tools/symbols`, `tools/widescreen`,
+`tools/framerate`, `tools/audio`, `tools/acceptance` (Abnahmelauf nach
+PLAN 2.5), `tools/diagnostics/headless_probe.py`.
 
 **Fortsetzung vom 2026-09-10:** [08-WINDOWS-ROM-CONTROLLER.md](08-WINDOWS-ROM-CONTROLLER.md).
 Auftraggeber präzisiert: native Windows-Anwendung, alle Controller, spielbar
@@ -147,7 +169,7 @@ Werkzeugkette, verifiziert:
 
 ```
 docs/01-MACHBARKEIT.md   Architekturentscheidung, geprüfte Commits, Lizenzlage
-docs/02-STATUS.md        Verifizierte Ergebnisse, offene Punkte, Upstream-Defekte
+docs/02-STATUS.md        Anforderungsmatrix: Stand je Anforderung und Arbeitspaket
 docs/HANDOFF.md          dieses Dokument
 patches/                 zwei Patches gegen Upstream-Lücken (siehe Abschnitt 7)
 scripts/bootstrap.ps1    klont Abhängigkeiten auf feste Commits, lädt LLVM, patcht

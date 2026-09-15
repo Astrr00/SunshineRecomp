@@ -3,10 +3,15 @@
 Nativer Port von Super Mario Sunshine für **Windows x86-64** auf Basis statischer
 Recompilation.
 
-**Status: früh.** Bislang liegen die Machbarkeitsanalyse, der Datenimport und der
-Build des Recompilers vor. Es gibt noch keine spielbare Anwendung. Siehe
-[docs/01-MACHBARKEIT.md](docs/01-MACHBARKEIT.md) für die Architekturentscheidung,
-belegte Grundlagen und die konkret fehlenden Komponenten.
+**Status: früh.** Das Spiel startet, läuft und speichert; eine fertige
+Anwendung ist es nicht. Der aktuelle Stand je Anforderung und Arbeitspaket
+steht in [docs/02-STATUS.md](docs/02-STATUS.md), das weitere Vorgehen in
+[docs/PLAN.md](docs/PLAN.md), die Architekturentscheidung in
+[docs/01-MACHBARKEIT.md](docs/01-MACHBARKEIT.md).
+
+Offene Grundsatzfrage seit dem 2026-09-15: Das rekompilierte Modul führt
+gemessen höchstens 0,18 % der Gasttakte aus, den Rest übernimmt der
+mitlaufende JIT ([docs/13-STATISCHER-KERN.md](docs/13-STATISCHER-KERN.md)).
 
 ## Bauen
 
