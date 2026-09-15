@@ -169,6 +169,40 @@ Solange das so bleibt, gibt es kein Mittel, die Richtigkeit nativ
 ausgeführten Codes zu prüfen — auch nicht für die 682 Blöcke, die tatsächlich
 laufen.
 
+## Versuch: dem Modul die Gelegenheit zurückgeben
+
+Wenn der Rückweg nur deshalb ungenutzt bleibt, weil der JIT seine Blocksuche
+in Assembler erledigt, dann müsste das Modul wieder zum Zug kommen, sobald
+jede Blocksuche über `JitBaseBlockCache::Dispatch()` läuft. Zwei Schalter,
+lokal eingebaut (`tools/diagnostics/staticrecomp-cdispatch.patch`):
+
+| Schalter | Wirkung |
+|---|---|
+| `STATICRECOMP_CDISPATCH=1` | `assembly_dispatcher = false`, jede Blocksuche über die C++-Fassung mit der Rückfrage |
+| `STATICRECOMP_NO_BLOCKLINK=1` | der Ersatz-JIT verkettet seine Blöcke nicht |
+
+Das Ergebnis ist nicht das erhoffte:
+
+| Lauf | Zeit bis Bild 30 |
+|---|---|
+| gewöhnlich | 22 s |
+| `STATICRECOMP_CDISPATCH=1` | **nach 1.447 s kein einziges Bild ausgegeben** |
+
+Der Lauf musste hart beendet werden und hinterließ deshalb nicht einmal eine
+Zählerzeile. Mindestens 65-mal langsamer, vermutlich weit mehr.
+
+Naheliegende Erklärung, nicht isoliert nachgewiesen: `DispatchableAt` ist
+nicht billig. Es ruft `RefreshHostCalls()` (Funktionszeiger in die
+Mod-Verwaltung), schlägt den Kachelindex nach und prüft den Kachelzustand —
+bei jeder einzelnen Blocksuche. Genau deshalb dürfte der Assembler-Weg
+existieren.
+
+Damit ist der Rückweg nicht bloß ungenutzt, sondern in dieser Form
+**unbrauchbar**: An jeder Blockgrenze zu fragen kostet mehr, als die native
+Ausführung einbringen könnte. Eine Lösung müsste die Frage billiger machen
+(etwa eine Bitmaske je Kachel, im Assembler-Dispatcher geprüft) oder sie
+seltener stellen (etwa nur beim Rücksprung aus einer Ausnahme).
+
 ## Warum der statische Kern langsamer ist
 
 `SetStaticRecompFallback(true)` (`JitBase.h:207-217`) schaltet im Ersatz-JIT
@@ -255,3 +289,8 @@ Auflösung wäre der Abstand dagegen unmittelbar spürbar.
 3. **Fastmem im Ersatz-JIT bewerten.** Solange das Spiel ohnehin dort läuft,
    kostet die Abschaltung unmittelbar Leistung. Ob sie für die SMC-Prüfung
    nötig ist, steht nicht im Quelltext.
+4. **Den Rückweg billig machen.** Der vorhandene Weg über
+   `JitBaseBlockCache::Dispatch()` ist gemessen unbrauchbar (siehe oben). Eine
+   Bitmaske je Kachel, die der Assembler-Dispatcher mit zwei Befehlen prüft,
+   wäre der naheliegende Ansatz — das ist ein Vorschlag an ModernGekko, keine
+   Aufgabe dieses Projekts.
