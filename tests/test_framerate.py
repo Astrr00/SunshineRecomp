@@ -442,3 +442,40 @@ class CliTests(unittest.TestCase):
                 code = module.main(["analyze", str(path)])
         self.assertEqual(code, 0)
         self.assertIn("zugeordnet 0 von 0 (-)", out.getvalue())
+
+
+class ProjectionTests(unittest.TestCase):
+    def test_lists_projections_with_counts_and_aspect(self):
+        from spike import projections
+        # Zwei perspektivische Projektionen mit verschiedenem waagerechtem
+        # Massstab, dazu eine orthografische.
+        wide = xf_load(fifo.XF_PROJECTION, [f32(1.5), 0, f32(2.0), 0, 0, 0, 0])
+        narrow = xf_load(fifo.XF_PROJECTION, [f32(2.0), 0, f32(2.0), 0, 0, 0, 0])
+        ortho = xf_load(fifo.XF_PROJECTION, [f32(1.0), 0, f32(1.0), 0, 0, 0, 1])
+        stream = (wide + primitive(0x90, 2, 12) + primitive(0x90, 1, 12)
+                  + narrow + primitive(0x90, 3, 12)
+                  + ortho + primitive(0x90, 1, 12))
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "p.dff"
+            path.write_bytes(build_dff([stream], [[]], CP_STATE))
+            found = projections(fifo.read(path), 0)
+        self.assertEqual([e["draws"] for e in found], [2, 1, 1])
+        self.assertEqual(found[0]["kind"], "perspektivisch")
+        self.assertAlmostEqual(found[0]["aspect"], 2.0 / 1.5, places=5)
+        self.assertEqual(found[0]["vertices"], 3)
+        self.assertAlmostEqual(found[1]["aspect"], 1.0, places=5)
+        self.assertEqual(found[2]["kind"], "orthografisch")
+        self.assertNotIn("aspect", found[2])
+
+    def test_frame_index_counts_from_the_end(self):
+        from spike import projections
+        first = xf_load(fifo.XF_PROJECTION, [f32(1.0), 0, f32(2.0), 0, 0, 0, 0]) \
+            + primitive(0x90, 1, 12)
+        second = xf_load(fifo.XF_PROJECTION, [f32(1.0), 0, f32(4.0), 0, 0, 0, 0]) \
+            + primitive(0x90, 1, 12)
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "p.dff"
+            path.write_bytes(build_dff([first, second], [[], []], CP_STATE))
+            dff = fifo.read(path)
+            self.assertAlmostEqual(projections(dff, 0)[0]["aspect"], 2.0, places=5)
+            self.assertAlmostEqual(projections(dff, -1)[0]["aspect"], 4.0, places=5)

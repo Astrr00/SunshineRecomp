@@ -27,7 +27,7 @@ import fifo  # noqa: E402
 import images  # noqa: E402
 import interpolate  # noqa: E402
 import replay  # noqa: E402
-from spike import analyze  # noqa: E402
+from spike import analyze, projections  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -49,6 +49,11 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--output", type=Path, required=True)
     r.add_argument("--images", type=int, default=8)
     r.add_argument("--timeout", type=float, default=300)
+    j = sub.add_parser("projections",
+                       help="Projektionen eines Frames auflisten (Sichtfeld messen)")
+    j.add_argument("dff", type=Path)
+    j.add_argument("--frame", type=int, default=-1)
+    j.add_argument("--report", type=Path)
     c = sub.add_parser("compare", help="Liegt das Zwischenbild zwischen A und B?")
     c.add_argument("a", type=Path)
     c.add_argument("mid", type=Path)
@@ -71,6 +76,21 @@ def main(argv: list[str] | None = None) -> int:
     except (fifo.FifoError, OSError) as error:
         print(f"Fehler: {error}", file=sys.stderr)
         return 2
+    if args.command == "projections":
+        found = projections(dff, args.frame)
+        print(f"{args.dff.name}: Frame {args.frame}, {len(found)} verschiedene Projektionen")
+        for entry in found:
+            line = (f"  {entry['kind']:14} {entry['draws']:5d} Draws, "
+                    f"{entry['vertices']:7d} Vertices")
+            if entry.get("aspect") is not None:
+                line += f", Seitenverhaeltnis {entry['aspect']:.4f}"
+            print(line)
+            print(f"      Werte {entry['values']}")
+        if args.report:
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text(json.dumps(found, indent=2))
+            print(f"  Bericht: {args.report}")
+        return 0
     if args.command == "interpolate":
         try:
             result, report = interpolate.synthesize(dff, args.frames[0], args.frames[1], args.t)

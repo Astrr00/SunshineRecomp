@@ -137,6 +137,36 @@ def cut_verdict(pair: dict, previous: dict | None = None, share_floor: float = 0
     return False
 
 
+def projections(dff: fifo.Dff, frame: int = -1) -> list[dict]:
+    """Die verschiedenen Projektionen eines Frames mit ihrer Haeufigkeit.
+
+    XF 0x1020 bis 0x1025 sind die sechs Parameter, 0x1026 der Typ (0
+    perspektivisch, 1 orthografisch). Bei perspektivischer Projektion ist
+    Wert 0 der waagerechte und Wert 2 der senkrechte Massstab; ihr Verhaeltnis
+    ist das Seitenverhaeltnis der Sicht. Genau daran laesst sich ein
+    Widescreen-Eingriff messen, ohne ein Bild anzusehen.
+    """
+    index = frame if frame >= 0 else len(dff.frames) + frame
+    summaries = fifo.summarize(dff, upto=index, keep={index})
+    counts: dict[tuple, int] = {}
+    vertices: dict[tuple, int] = {}
+    for draw in summaries[index].draws:
+        counts[draw.projection] = counts.get(draw.projection, 0) + 1
+        vertices[draw.projection] = vertices.get(draw.projection, 0) + draw.vertices
+    out = []
+    for raw, count in sorted(counts.items(), key=lambda kv: -kv[1]):
+        values = [_f32(w) for w in raw[:6]]
+        kind = "orthografisch" if raw[6] == 1 else "perspektivisch"
+        entry = {"kind": kind, "raw": [f"0x{w:08X}" for w in raw],
+                 "values": [round(v, 6) for v in values],
+                 "draws": count, "vertices": vertices[raw]}
+        if raw[6] != 1 and values[2]:
+            # Waagerecht durch senkrecht: das Seitenverhaeltnis der Sicht.
+            entry["aspect"] = round(values[2] / values[0], 6) if values[0] else None
+        out.append(entry)
+    return out
+
+
 def analyze(dff: fifo.Dff) -> dict:
     summaries = fifo.summarize(dff)
     report = {"file": str(dff.path), "version": dff.version, "game_id": dff.game_id,
