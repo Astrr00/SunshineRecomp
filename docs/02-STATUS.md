@@ -14,7 +14,7 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 | # | Anforderung | Stand | Belegt | Offen |
 |---|---|---|---|---|
 | 1 | Unbegrenzte Framerate | Spike abgeschlossen | Zuordnung der Zeichenbefehle 96–100 %, Bewegung steckt in den Matrizen, synthetisches Zwischenbild gerendert und geprüft, Schnitterkennung kalibriert ([11](11-FRAMERATE-SPIKE.md)) | Umsetzung (WP14); Gegenschnitt in gleicher Szene; Kosten auf echter GPU; Entscheidung des Auftraggebers zu PLAN 5.4 |
-| 2 | Hohe Auflösung, getrennte Ausgabe | weitgehend erledigt | `internal_scale` 1–12 und `output_resolution` getrennt gemessen; randloses Vollbild 1920x1080 und 3440x1440 ([07](07-ANZEIGE.md)) | HiDPI, Mehrmonitor, Launcher-Bedienung, Kantenglättung als Option |
+| 2 | Hohe Auflösung, getrennte Ausgabe, **Skalierer** | weitgehend erledigt | `internal_scale` 1–12 und `output_resolution` getrennt gemessen; randloses Vollbild 1920x1080 und 3440x1440 ([07](07-ANZEIGE.md)); interner Faktor 6 rendert 3840x2688 = 10,3 MPixel, also mehr als 4K in beiden Richtungen; neun Skalierer-Kerne als Namen bedienbar, zwei davon erstmals erreichbar ([18](18-SKALIERER.md)) | Bildwirkung der Kerne am echten Fenster; 3840x2160 als Ausgabegröße nie gefahren; Schärfungsstufe fehlt; HiDPI, Mehrmonitor, Launcher-Bedienung |
 | 3 | Echtes Widescreen | **Kern abgenommen** | 25/25 Patchstellen im RAM; in das DOL eingebacken, kein SMC-Rückfall; senkrechter Maßstab bitgleich, waagerechter mal 0,757, Sichtverhältnis exakt 16/9, HUD am Bildrand verankert und unverzerrt ([03](03-WIDESCREEN.md), [09](09-DOL-BEFUNDE.md), [10](10-KOPFLOSER-PRUEFSTAND.md), [15](15-WIDESCREEN-ABNAHME.md)) | Filme werden gestreckt (Projektion unverändert, [15](15-WIDESCREEN-ABNAHME.md)); Culling, Effekte und weitere HUD-Elemente; 21:9 und 32:9; ob der Code nativ oder im JIT läuft, ist offen ([13](13-STATISCHER-KERN.md)) |
 | 4 | HUD-Anker, Menüs, Sequenzen | nicht begonnen | nur mittelbar über die 2D-Konstanten des Gecko-Codes | alles; Adressbasis steht jetzt zur Verfügung (WP7) |
 | 5 | Windows-Anwendung | halb | Win32-Fenster, randloses Vollbild, Alt+Enter, DPI; Launcher gebaut; RVZ-Import 179/179 byteidentisch ([08](08-WINDOWS-ROM-CONTROLLER.md)) | Launcher nie visuell bedient; kein Modulbau im Launcher; kein Paket |
@@ -39,6 +39,8 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 | WP10 | HUD, Menüs, Sequenzen | nicht begonnen | — |
 | WP11 | Filme | Befund liegt vor | die Filmprojektion ist vom Widescreen-Code unberührt, bei 16:9 also gestreckt ([15](15-WIDESCREEN-ABNAHME.md)) |
 | WP12 | Feinschliff | nicht begonnen | — |
+| WP17 | Rückweg in den statischen Kern | **belegt** | [16](16-RUECKWEG.md), [17](17-LOCKSTEP.md); offen: Urteil des Lockstep, Voreinstellung, Geschwindigkeit |
+| WP18 | Grafikskalierer | **Verdrahtung belegt** | [18](18-SKALIERER.md); offen: Bildwirkung am echten Fenster, Schärfung, Launcher |
 | WP13 | Framerate-Spike | **abgeschlossen** | [11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md) |
 | WP14 | Framerate-Umsetzung | wartet auf Entscheidung | PLAN 5.4 |
 | WP15 | 60-FPS-Modus (optional) | zurückgestellt | Entscheidung 6 im Plan |
@@ -56,13 +58,16 @@ weiter. Ein nativer Port ist mit diesem Unterbau möglich.
 
 Zwei Punkte bleiben offen und sind die nächsten Schritte:
 
-1. **Richtigkeit.** Der Lockstep-Verifizierer schaltet ab, weil das Modul
-   `ppc_set_mem_write_journal` nicht exportiert. Solange das so ist, ist der
-   Rückweg ausdrücklich zu schalten (`STATICRECOMP_YIELD=1`) und nicht
-   Voreinstellung.
-2. **Geschwindigkeit.** Nativ läuft das Spiel derzeit halb so schnell wie mit
-   dem Ersatz-JIT — 7,5 Gasttakte je Dispatch, die Burst-Schleife leistet je
-   Dispatch Arbeit, die je Burst genügen würde.
+1. **Richtigkeit.** Der Lockstep-Verifizierer ist freigeschaltet
+   ([17](17-LOCKSTEP.md)) und meldet Abweichungen in 3,4 % der geprüften
+   Blöcke — bei gleicher Rate und an denselben Blöcken auch **ohne** Rückweg.
+   Ob es Recompilationsfehler oder Artefakte des Verfahrens sind, ist offen.
+   Bis dahin ist der Rückweg ausdrücklich zu schalten (`STATICRECOMP_YIELD=1`)
+   und nicht Voreinstellung.
+2. **Geschwindigkeit.** Nativ läuft das Spiel 1,27-mal langsamer als mit dem
+   Ersatz-JIT — nach einer ersten Verbesserung um 52 %
+   (`moderngekko-host-call-active.patch`). Der Rest sind Prüfungen je Dispatch,
+   die je Burst genügen würden.
 
 Die Frage an ModernGekko ([14](14-FRAGE-AN-MODERNGEKKO.md)) bleibt sinnvoll,
 hat aber einen anderen Inhalt: nicht mehr „ist das der vorgesehene Zustand",
@@ -87,6 +92,8 @@ sondern „hier ist ein Patch — ist das der beabsichtigte Weg?".
 | [14](14-FRAGE-AN-MODERNGEKKO.md) | die daraus folgende Frage an ModernGekko, vorbereitet |
 | [15](15-WIDESCREEN-ABNAHME.md) | Widescreen an Projektion und Bild abgenommen |
 | [16](16-RUECKWEG.md) | der Rückweg in den statischen Kern: gebaut, gemessen, abgenommen |
+| [17](17-LOCKSTEP.md) | der Lockstep-Verifizierer: freigeschaltet, erstmals gelaufen |
+| [18](18-SKALIERER.md) | Ausgabe-Skalierer und hohe Auflösung |
 
 Die frühere Chronik dieses Dokuments ist in die Matrizen oben aufgegangen. Was
 darunter folgt, sind die Messwerte der Windows-Sitzungen; sie bleiben als

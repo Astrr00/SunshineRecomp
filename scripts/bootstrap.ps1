@@ -151,6 +151,29 @@ function Add-Patches {
             File = 'moderngekko-display-settings.patch'
             Target = Join-Path $RefRoot 'ModernGekko'
         }
+        # host_call_active und host_call_generation waren nie verdrahtet, obwohl
+        # ModernGekkos ModManager beide beantwortet. Folge: Der statische Kern
+        # nimmt an, es gebe immer Guest-Abfangstellen, und fragt bei jedem
+        # Dispatch ueber einen indirekten Aufruf nach -- in einem Lauf ueber 180
+        # Bilder 192 Millionen Mal. Siehe docs/16-RUECKWEG.md.
+        @{
+            File = 'moderngekko-host-call-active.patch'
+            Target = Join-Path $RefRoot 'ModernGekko'
+        }
+        # Ausgabe-Skalierer als Produktfunktion. Der Shader
+        # Data/Sys/Shaders/default_pre_post_process.glsl setzt neun Kerne um,
+        # die Aufzaehlung OutputResamplingMode stellte nur sieben bereit:
+        # Nearest Neighbor und Bicubic Hermite waren unerreichbar. Der erste
+        # Patch macht sie erreichbar, der zweite gibt sie als Namen nach aussen
+        # (config.ini scaler=, --scaler). Siehe docs/17-SKALIERER.md.
+        @{
+            File = 'recompcore-scaler-kernels.patch'
+            Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
+        }
+        @{
+            File = 'moderngekko-scaler.patch'
+            Target = Join-Path $RefRoot 'ModernGekko'
+        }
         # Rueckweg in den statischen Kern. Der Ersatz-JIT betrat seinen
         # Dispatcher und kehrte praktisch nie zurueck; das Rekompilat lief
         # deshalb nach dem ersten Systemaufruf nicht mehr (gemessen: 0,0015 %

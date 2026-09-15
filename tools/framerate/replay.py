@@ -26,26 +26,49 @@ class ReplayError(Exception):
     pass
 
 
-def configure(user: Path) -> None:
+def configure(user: Path, resampling: int | None = None,
+              window: tuple[int, int] | None = None,
+              internal: int | None = None) -> None:
+    """Schreibt die Konfiguration des Players.
+
+    ``resampling`` und ``window`` dienen der Abnahme des Ausgabe-Skalierers
+    (docs/17-SKALIERER.md). Ohne sie bleibt es beim bisherigen Verhalten:
+    ``FrameDumpsResolutionType = 2`` gibt die rohe XFB-Auflösung aus und geht
+    damit **nicht** durch den Skalierer -- richtig fuer die Bildzuordnung des
+    Framerate-Spikes, unbrauchbar fuer eine Aussage ueber das Skalieren. Mit
+    ``window`` wird auf ``0`` (Fensterauflösung) umgeschaltet, und erst dann
+    wirkt der Kern aus ``resampling``.
+    """
     (user / "Config").mkdir(parents=True, exist_ok=True)
     (user / "Logs").mkdir(exist_ok=True)
+    fenster = ""
+    if window is not None:
+        fenster = (f"[Display]\nRenderWindowWidth = {window[0]}\n"
+                   f"RenderWindowHeight = {window[1]}\nRenderWindowAutoSize = False\n")
     (user / "Config/Dolphin.ini").write_text(
         "[Core]\n[FifoPlayer]\nLoopReplay = True\n[Movie]\nDumpFrames = True\n"
-        "[Interface]\nConfirmStop = False\n[Analytics]\nEnabled = False\nPermissionAsked = True\n")
+        "[Interface]\nConfirmStop = False\n[Analytics]\nEnabled = False\nPermissionAsked = True\n"
+        + fenster)
     (user / "Config/GFX.ini").write_text(
-        "[Settings]\nDumpFramesAsImages = True\nFrameDumpsResolutionType = 2\n"
-        "[Hacks]\nImmediateXFBEnable = True\n")   # jede XFB-Kopie sofort ausgeben
+        "[Settings]\nDumpFramesAsImages = True\n"
+        f"FrameDumpsResolutionType = {0 if window is not None else 2}\n"
+        + ("" if internal is None else f"InternalResolution = {internal}\n")
+        + ("" if resampling is None else
+           f"[Enhancements]\nOutputResampling = {resampling}\n")
+        + "[Hacks]\nImmediateXFBEnable = True\n")   # jede XFB-Kopie sofort ausgeben
     (user / "Config/Logger.ini").write_text(
         "[Options]\nWriteToFile = True\nWriteToConsole = False\nVerbosity = 3\n"
         "[Logs]\nVideo = True\nHost GPU = True\nFRAMEDUMP = True\nCORE = True\nBOOT = True\n")
 
 
 def replay(dff: Path, player: Path, output: Path, images: int, timeout: float = 300,
-           backend: str = "Vulkan") -> list[Path]:
+           backend: str = "Vulkan", resampling: int | None = None,
+           window: tuple[int, int] | None = None,
+           internal: int | None = None) -> list[Path]:
     if output.exists():
         raise ReplayError(f"{output} existiert; Belege werden nicht ueberschrieben")
     user = output / "user"
-    configure(user)
+    configure(user, resampling, window, internal)
     frames = user / "Dump/Frames"
     frames.mkdir(parents=True)
     cmd = [str(player), "-p", "headless", "-u", str(user), "-v", backend, "-e", str(dff)]

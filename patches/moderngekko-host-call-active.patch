@@ -1,0 +1,17 @@
+--- a/src/runtime/dolphin_runtime.cpp
++++ b/src/runtime/dolphin_runtime.cpp
+@@ -750,6 +750,14 @@
+   recomp_source.host_call_contains = &ModManager::HostCallContains;
+   recomp_source.host_call_range_contains =
+       &ModManager::HostCallRangeContains;
++  // Ohne diese beiden nimmt der statische Kern an, es gebe immer
++  // Guest-Abfangstellen (StaticRecompCore_SMC.cpp, RefreshHostCalls). Dann ist
++  // m_guest.host_call nie null, und die Burst-Schleife fragt bei jedem einzelnen
++  // Dispatch ueber einen indirekten Aufruf nach, ob die Adresse abgefangen wird
++  // -- in einem Lauf ueber 180 Bilder 192 Millionen Mal. ModManager beantwortet
++  // beides bereits; es war nur nicht verdrahtet.
++  recomp_source.host_call_active = &ModManager::HostCallActive;
++  recomp_source.host_call_generation = &ModManager::HostCallGeneration;
+   recomp_source.host_call_user = impl->mods.get();
+   jit.SetStaticRecompModuleSource(std::move(recomp_source));
+ 

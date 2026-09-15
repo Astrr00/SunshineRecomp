@@ -49,6 +49,16 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--output", type=Path, required=True)
     r.add_argument("--images", type=int, default=8)
     r.add_argument("--timeout", type=float, default=300)
+    r.add_argument("--resampling", type=int,
+                   help="Kern des Ausgabe-Skalierers, 0..8 (docs/17-SKALIERER.md). "
+                        "Wirkt nur zusammen mit --window, weil die Bildausgabe sonst "
+                        "die rohe XFB-Aufloesung nimmt und gar nicht skaliert wird.")
+    r.add_argument("--internal", type=int,
+                   help="interner Aufloesungsfaktor (1..12). Bei Faktor 6 rendert "
+                        "das Spiel 3840x3168 und die Bildausgabe gibt genau das aus.")
+    r.add_argument("--window", metavar="BREITExHOEHE",
+                   help="Fenstergroesse fuer die Bildausgabe, etwa 1920x1080. "
+                        "Schaltet die Ausgabe auf die Fensterauflösung um.")
     j = sub.add_parser("projections",
                        help="Projektionen eines Frames auflisten (Sichtfeld messen)")
     j.add_argument("dff", type=Path)
@@ -65,7 +75,18 @@ def main(argv: list[str] | None = None) -> int:
         return compare(args)
     if args.command == "replay":
         try:
-            found = replay.replay(args.dff, args.player, args.output, args.images, args.timeout)
+            window = None
+            if args.window:
+                try:
+                    breite, hoehe = (int(v) for v in args.window.lower().split("x"))
+                except ValueError:
+                    parser.error("--window braucht BREITExHOEHE, etwa 1920x1080")
+                window = (breite, hoehe)
+            if args.resampling is not None and window is None:
+                parser.error("--resampling ohne --window bleibt wirkungslos")
+            found = replay.replay(args.dff, args.player, args.output, args.images,
+                                  args.timeout, resampling=args.resampling, window=window,
+                                  internal=args.internal)
         except replay.ReplayError as error:
             print(f"Fehler: {error}", file=sys.stderr)
             return 2

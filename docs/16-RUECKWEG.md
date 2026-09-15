@@ -142,10 +142,12 @@ In beiden Läufen steht `noprogress=0`: Die Notbremse hat nie ausgelöst.
 Das Spiel spielt bis in die Flugplatz-Sequenz, die Arena- und Heapgrenzen
 stimmen byteweise, der Stapel bleibt 54.216 Bytes über der Grenze.
 
-**Das ist kein Richtigkeitsbeweis.** Der Lockstep-Verifizierer steht weiterhin
-nicht zur Verfügung, weil das gebaute Modul `ppc_set_mem_write_journal` nicht
-exportiert. Solange das so ist, sind die Abnahmeszenarien Stichproben und
-keine Prüfung. Deshalb ist der Rückweg **ausdrücklich zu schalten**
+**Das ist kein Richtigkeitsbeweis.** Der Lockstep-Verifizierer ist inzwischen
+freigeschaltet ([17-LOCKSTEP.md](17-LOCKSTEP.md)) und zeigt: Die Abweichungen,
+die er meldet, gibt es mit und ohne Rückweg in derselben Rate und an denselben
+Blöcken — der Rückweg erzeugt also keine. Ob die Abweichungen selbst
+Recompilationsfehler oder Artefakte des Verfahrens sind, ist offen. Solange das
+so ist, sind die Abnahmeszenarien Stichproben und keine Prüfung. Deshalb ist der Rückweg **ausdrücklich zu schalten**
 (`STATICRECOMP_YIELD=1`) und nicht Voreinstellung. Ihn zur Voreinstellung zu
 machen setzt einen bestandenen Lockstep-Lauf voraus.
 
@@ -174,16 +176,34 @@ Ungedrosselt, gleicher Abschnitt, je zwei Läufe, Null-Grafik:
 | statischer Kern, Rückweg aus | 31,3 / 30,9 |
 | statischer Kern, Rückweg an | **16,3 / 16,2** |
 
-Nativ ist also halb so schnell wie der Ersatz-JIT im statischen Kern und
-zwölfmal langsamer als der reine JIT. Die Ursache ist nicht das Rekompilat
-selbst, sondern der Aufwand je Dispatch: 192.215.336 Dispatches für
-1.449.070.481 Takte sind **7,5 Takte je Dispatch**, und die Burst-Schleife
-leistet je Dispatch Arbeit, die je Burst genügen würde — Leerlauferkennung,
-Zeitbasis, Kachelabfrage, dazu ein indirekter Aufruf in die Mod-Verwaltung,
-weil `host_call_active` in ModernGekko nicht verdrahtet ist
-(`dolphin_runtime.cpp:749-753`).
+Nativ war also halb so schnell wie der Ersatz-JIT im statischen Kern. Die
+Ursache ist nicht das Rekompilat selbst, sondern der Aufwand je Dispatch:
+192.215.336 Dispatches für 1.449.070.481 Takte sind **7,5 Takte je Dispatch**,
+und die Burst-Schleife leistete je Dispatch Arbeit, die je Burst genügt hätte.
 
-Das ist der nächste Angriffspunkt und keine Grenze des Verfahrens.
+### Ein Teil davon ist behoben
+
+Der auffälligste Posten war ein indirekter Aufruf in die Mod-Verwaltung bei
+**jedem** Dispatch. Er entstand, weil `host_call_active` und
+`host_call_generation` in ModernGekko nie verdrahtet waren
+(`dolphin_runtime.cpp:749-753`), obwohl `ModManager` beide längst beantwortet.
+Der statische Kern nahm deshalb an, es gebe immer Guest-Abfangstellen
+(`RefreshHostCalls`, `StaticRecompCore_SMC.cpp:316-332`), hielt
+`m_guest.host_call` ungleich null und fragte in der inneren Schleife bei jeder
+Adresse nach. Zwei Zeilen, `patches/moderngekko-host-call-active.patch`:
+
+| Kern | vorher | nachher |
+|---|---|---|
+| reiner JIT64 | 187,8 / 190,4 | 186,6 / 187,2 |
+| statischer Kern, Rückweg aus | 31,3 / 30,9 | 31,8 / 31,2 |
+| statischer Kern, Rückweg an | 16,3 / 16,2 | **24,7 / 24,9** |
+
+**52 % mehr Leistung im nativen Pfad.** Der Abstand zum Ersatz-JIT schrumpft
+von Faktor 2,0 auf 1,27. Die drei Abnahmeszenarien bestehen danach unverändert
+(`boot` 10/10, `spielstart` 11/11, `nativ` 8/8).
+
+Der Rest ist der nächste Angriffspunkt und keine Grenze des Verfahrens:
+Leerlauferkennung, Zeitbasis und Kachelabfrage laufen weiterhin je Dispatch.
 
 ## Was das für das Vorhaben bedeutet
 

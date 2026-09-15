@@ -1,0 +1,15 @@
+--- a/Source/Core/VideoCommon/VideoConfig.h
++++ b/Source/Core/VideoCommon/VideoConfig.h
+@@ -74,6 +74,12 @@ enum class OutputResamplingMode : int
+   CatmullRom,
+   SharpBilinear,
+   AreaSampling,
++  // Beide sind in Data/Sys/Shaders/default_pre_post_process.glsl seit jeher
++  // umgesetzt (resampling_method 7 und 8), waren aber ueber diese Aufzaehlung
++  // nicht erreichbar. Nearest Neighbor ist fuer ganzzahlige Vielfache der
++  // schaerfste Weg, Hermite der weichste der vier Bikubischen.
++  NearestNeighbor,
++  BicubicHermite,
+ };
+ 
+ enum class ColorCorrectionRegion : int
