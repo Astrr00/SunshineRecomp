@@ -146,3 +146,45 @@ class ReadRangeTests(unittest.TestCase):
         result = checker.check(scenario, m, SHUTDOWN)
         self.assertFalse(result.passed)
         self.assertIn("kein Wort", result.checks[0][2])
+
+
+class StackTests(unittest.TestCase):
+    BASE = 0x80417800
+    FLOOR = 0x80417918
+
+    def test_finds_the_lowest_written_address_above_the_floor(self):
+        blob = bytearray(0x10000)
+        blob[0:0x118] = b"\xaa" * 0x118          # eingebackener Code, unter floor
+        blob[0xD4B8] = 0x01                      # Stapel reicht bis hierher
+        found = checker.low_water(bytes(blob), self.BASE, self.FLOOR)
+        self.assertEqual(found, self.BASE + 0xD4B8)
+
+    def test_untouched_region_reports_none(self):
+        self.assertIsNone(checker.low_water(bytes(0x1000), self.BASE, self.FLOOR))
+
+    def test_promise_holds_with_enough_margin(self):
+        blob = bytearray(0x10000)
+        blob[0xD4B8] = 0x01
+        scenario = {"name": "t", "frames": 1, "expect": {"stack_low_water": {
+            "read": "luecke", "base": hex(self.BASE), "floor": hex(self.FLOOR),
+            "min_margin": 4096}}}
+        m = manifest(reads={"luecke": {"hex": bytes(blob).hex()}})
+        result = checker.check(scenario, m, SHUTDOWN)
+        self.assertTrue(result.passed, result.as_dict())
+        self.assertIn("0x80424cb8", result.checks[0][2])
+
+    def test_promise_fails_when_the_stack_comes_too_close(self):
+        blob = bytearray(0x10000)
+        blob[0x200] = 0x01                        # kurz ueber dem Codebereich
+        scenario = {"name": "t", "frames": 1, "expect": {"stack_low_water": {
+            "read": "luecke", "base": hex(self.BASE), "floor": hex(self.FLOOR),
+            "min_margin": 4096}}}
+        m = manifest(reads={"luecke": {"hex": bytes(blob).hex()}})
+        self.assertFalse(checker.check(scenario, m, SHUTDOWN).passed)
+
+    def test_missing_read_is_reported(self):
+        scenario = {"name": "t", "frames": 1, "expect": {"stack_low_water": {
+            "read": "luecke", "base": "0x80417800", "floor": "0x80417918"}}}
+        result = checker.check(scenario, manifest(), SHUTDOWN)
+        self.assertFalse(result.passed)
+        self.assertIn("fehlt", result.checks[0][2])

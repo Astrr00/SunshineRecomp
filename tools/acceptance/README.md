@@ -41,6 +41,7 @@ So steht in einem Szenario genau das, was wirklich zugesagt wird.
 | `audio_min_seconds` | Länge des DSP-Mitschnitts |
 | `audio_max_silence_share` | Anteil stiller Blöcke |
 | `audio_seconds_per_present` | Schranken für Ton je Bildausgabe. Enthält den Startversatz; die reine Steigung liefert `tools/audio rate` |
+| `stack_low_water` | tiefste beschriebene Adresse im Stapelbereich, gemessen mit Mindestabstand zu `floor`. Damit wird der eingebackene Widescreen-Code gegen den Stapel gesichert ([10](../../docs/10-KOPFLOSER-PRUEFSTAND.md), Befund 1) |
 
 ## Vorhandene Szenarien
 

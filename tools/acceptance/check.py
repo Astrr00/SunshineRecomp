@@ -21,7 +21,9 @@ Ein Szenario ist JSON:
                   "mario": ["0x80000000", "0x81800000"]},   // Bereich statt Wert
         "audio_seconds_per_present": [0.0110, 0.0113],
         "audio_min_seconds": 5.0,
-        "audio_max_silence_share": 0.95
+        "audio_max_silence_share": 0.95,
+        "stack_low_water": {"read": "luecke", "base": "0x80417800",
+                            "floor": "0x80417918", "min_margin": 4096}
       }
     }
 
@@ -69,6 +71,25 @@ def counters(stderr: str) -> dict | None:
 
 def _in_range(value: float, bounds: list) -> bool:
     return bounds[0] <= value <= bounds[1]
+
+
+def low_water(blob: bytes, base: int, floor: int) -> int | None:
+    """Tiefste beschriebene Adresse ab ``floor`` in einem gelesenen Bereich.
+
+    Der GameCube-Stapel waechst nach unten. Zwischen dem Ende des Abbilds und
+    dem Wurzel-Heap liegt er in einem sonst genullten Bereich
+    (docs/10-KOPFLOSER-PRUEFSTAND.md, Befund 1). Die erste von unten gesehen
+    nicht genullte Stelle oberhalb von ``floor`` ist daher sein Tiefstand.
+    ``floor`` schliesst den eingebackenen Widescreen-Code aus, der dort
+    absichtlich steht.
+
+    Rueckgabe: die Adresse, oder None, wenn der Bereich ab ``floor`` leer ist.
+    """
+    start = max(0, floor - base)
+    for offset in range(start, len(blob)):
+        if blob[offset]:
+            return base + offset
+    return None
 
 
 def check(scenario: dict, manifest: dict, stderr: str = "",
@@ -131,6 +152,23 @@ def check(scenario: dict, manifest: dict, stderr: str = "",
         else:
             result.add(f"hoechstens {expect['max_fallback']} Interpreter-Rueckfaelle",
                        found["fallback"] <= expect["max_fallback"], f"waren {found['fallback']}")
+
+    if "stack_low_water" in expect:
+        spec = expect["stack_low_water"]
+        entry = manifest.get("reads", {}).get(spec["read"])
+        if entry is None or "hex" not in entry:
+            result.add("Stapel-Tiefstand", False, f"Lesung {spec['read']} fehlt")
+        else:
+            base, floor = int(str(spec["base"]), 0), int(str(spec["floor"]), 0)
+            found = low_water(bytes.fromhex(entry["hex"]), base, floor)
+            if found is None:
+                result.add("Stapel-Tiefstand", True,
+                           f"Bereich ab {spec['floor']} unberuehrt")
+            else:
+                margin = found - floor
+                want = int(spec.get("min_margin", 0))
+                result.add(f"Stapel bleibt mindestens {want} Bytes ueber {spec['floor']}",
+                           margin >= want, f"Tiefstand {found:#010x}, Abstand {margin} Bytes")
 
     if audio is not None:
         if "audio_min_seconds" in expect:
