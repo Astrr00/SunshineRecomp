@@ -1,0 +1,16 @@
+{
+  "name": "spielstart",
+  "frames": 300,
+  "timeout": 2400,
+  "sequence": "fixtures/game-start.json",
+  "reads": ["0x8040E0F0:4:gpMarioAddress"],
+  "expect": {
+    "exit_code": 0,
+    "no_error": true,
+    "min_frames": 3500,
+    "smc_failed": 0,
+    "max_fallback": 0,
+    "audio_min_seconds": 100.0,
+    "audio_max_silence_share": 0.9
+  }
+}

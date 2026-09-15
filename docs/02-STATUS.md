@@ -26,13 +26,13 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 
 | WP | Gegenstand | Stand | Beleg |
 |---|---|---|---|
-| WP0 | Absicherung | teilweise | CI mit Tests und Patch-Prüfung (`checks.yml`, `scripts/check_patches.py`); Eingabefolgen als Fixtures; dieses Dokument als Matrix. Offen: restliche Diagnoseskripte aus `build/` |
+| WP0 | Absicherung | teilweise | CI mit Tests und Patch-Prüfung (`checks.yml`, `scripts/check_patches.py`); Eingabefolgen als Fixtures unter `tools/acceptance/fixtures/`; dieses Dokument als Matrix. Offen: restliche Diagnoseskripte aus `build/` des Auftraggebers |
 | WP1 | Ton | **gemessen** | [12-TON.md](12-TON.md); offen: Hörprobe, echter Ausgabeweg, DSP-LLE |
 | WP2 | Toolchain-Paket, Modulbau im Launcher | nicht begonnen, **blockiert** | Vorfrage aus [13](13-STATISCHER-KERN.md) |
 | WP3 | Controller | nicht begonnen | — |
 | WP4 | Launcher, Windows-Anwendung | teilweise | [07](07-ANZEIGE.md), [08](08-WINDOWS-ROM-CONTROLLER.md) |
 | WP5 | Stabilität | teilweise | Stapeltiefe über 30.000 Frames gemessen ([11](11-FRAMERATE-SPIKE.md)); Dauerlauf offen |
-| WP6 | Abnahmelauf | nicht begonnen | — |
+| WP6 | Abnahmelauf | **Grundgeruest steht** | `tools/acceptance` mit zwei Szenarien; `boot` am echten Spiel bestanden (10/10 Zusagen), 10 Tests ohne Spielkopie ([README](../tools/acceptance/README.md)) |
 | WP7 | Adressbasis | **erledigt** | `tools/symbols`, 12.573/12.573 Bezeichner gegengeprüft ([09](09-DOL-BEFUNDE.md)) |
 | WP8 | 16:9 im Rekompilat | Schritte 1–3 belegt | `tools/widescreen`, gebackenes DOL läuft ohne SMC-Rückfall ([09](09-DOL-BEFUNDE.md), [10](10-KOPFLOSER-PRUEFSTAND.md)); Bildabnahme offen |
 | WP9 | Ultrawide | nicht begonnen | — |
