@@ -1,0 +1,18 @@
+{
+  "name": "nativ",
+  "frames": 180,
+  "timeout": 600,
+  "reads": ["0x8040CE48:4:arena-lo", "0x8040E798:4:arena-hi"],
+  "expect": {
+    "exit_code": 0,
+    "no_error": true,
+    "min_frames": 150,
+    "smc_failed": 0,
+    "max_fallback": 0,
+    "min_native_share": 0.25,
+    "reads": {
+      "arena-lo": "0x817feec0",
+      "arena-hi": "0x817feec0"
+    }
+  }
+}

@@ -37,11 +37,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-SHUTDOWN = re.compile(
-    r"shutdown: native=(?P<native>\d+) fallback=(?P<fallback>\d+) "
-    r"native_exc=(?P<native_exc>\d+) hook_fb=(?P<hook_fb>\d+) "
-    r"smc_failed=(?P<smc_failed>\d+) verifications=(?P<verifications>\d+) "
-    r"reverify_events=(?P<reverify>\d+) bursts=(?P<bursts>\d+) cycles=(?P<cycles>\d+)")
+# Die Zaehlerzeile des statischen Kerns wird als Folge von SCHLUESSEL=ZAHL
+# gelesen, nicht gegen eine feste Reihenfolge geprueft: Sie ist im Laufe des
+# Vorhabens schon zweimal gewachsen, und eine starre Fassung haette jede
+# Erweiterung stillschweigend in "keine Zaehlerzeile" verwandelt.
+SHUTDOWN = re.compile(r"shutdown:(?P<rest>(?: [A-Za-z_]+=\d+)+)")
+_PAIR = re.compile(r"([A-Za-z_]+)=(\d+)")
 
 
 @dataclass
@@ -62,11 +63,21 @@ class Result:
 
 
 def counters(stderr: str) -> dict | None:
-    """Die Zaehlerzeile des statischen Kerns, falls vorhanden."""
+    """Die Zaehlerzeile des statischen Kerns, falls vorhanden.
+
+    Der letzte Treffer gewinnt; ein Lauf kann die Zeile mehrfach schreiben.
+    ``reverify_events`` heisst aus historischen Gruenden ``reverify``.
+    """
     match = None
     for match in SHUTDOWN.finditer(stderr):
         pass
-    return {k: int(v) for k, v in match.groupdict().items()} if match else None
+    if match is None:
+        return None
+    found = {k: int(v) for k, v in _PAIR.findall(match.group("rest"))}
+    if "native" not in found:
+        return None
+    found.setdefault("reverify", found.get("reverify_events", 0))
+    return found
 
 
 def _in_range(value: float, bounds: list) -> bool:
@@ -152,6 +163,21 @@ def check(scenario: dict, manifest: dict, stderr: str = "",
         else:
             result.add(f"hoechstens {expect['max_fallback']} Interpreter-Rueckfaelle",
                        found["fallback"] <= expect["max_fallback"], f"waren {found['fallback']}")
+
+    if "min_native_share" in expect:
+        want = expect["min_native_share"]
+        if found is None:
+            result.add(f"mindestens {want:.1%} der Gasttakte nativ", False, "keine Zaehlerzeile")
+        elif "ticks" not in found or found["ticks"] == 0:
+            # Ohne die Gesamtzahl der Gasttakte laesst sich kein Anteil bilden.
+            # Frueher wurde er aus der Bildzahl und einer angenommenen Bildrate
+            # geschaetzt; das war eine Annahme, keine Messung (docs/13).
+            result.add(f"mindestens {want:.1%} der Gasttakte nativ", False,
+                       "die Laufzeit meldet kein ticks= in der Zaehlerzeile")
+        else:
+            share = found["cycles"] / found["ticks"]
+            result.add(f"mindestens {want:.1%} der Gasttakte nativ",
+                       share >= want, f"waren {share:.2%}")
 
     if "stack_low_water" in expect:
         spec = expect["stack_low_water"]

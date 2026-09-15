@@ -19,7 +19,7 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 | 4 | HUD-Anker, Menüs, Sequenzen | nicht begonnen | nur mittelbar über die 2D-Konstanten des Gecko-Codes | alles; Adressbasis steht jetzt zur Verfügung (WP7) |
 | 5 | Windows-Anwendung | halb | Win32-Fenster, randloses Vollbild, Alt+Enter, DPI; Launcher gebaut; RVZ-Import 179/179 byteidentisch ([08](08-WINDOWS-ROM-CONTROLLER.md)) | Launcher nie visuell bedient; kein Modulbau im Launcher; kein Paket |
 | 7 | Analoge Schultertaste, Belegung | Produktseite offen | Halb- und Voll-R unterschieden (0 gegen 542,793 Einheiten) ([05](05-FIFO-UND-FLUDD.md)) | reale Controller, Belegungsoberfläche, Totzonen, Tastatur/Maus, Hotplug |
-| 8 | Originalgetreu, Speichern/Laden | Kern trägt | erster Shine, Save/Load, Neustart mit 1 Shine ([06](06-ERSTER-SHINE.md)); **Ton gemessen**: keine Zeitbasisabweichung, 108,8 s abtastwertgleich zum Referenzkern, Tempo innerhalb 0,3 % zur Filmrate auf der Disc ([12](12-TON.md)) | Hörprobe; echter Ausgabeweg (cubeb/WASAPI); Spielverlauf jenseits des Anfangs |
+| 8 | Originalgetreu, Speichern/Laden | Kern trägt, jetzt nativ | erster Shine, Save/Load, Neustart mit 1 Shine ([06](06-ERSTER-SHINE.md)); **Ton gemessen**: keine Zeitbasisabweichung, 108,8 s abtastwertgleich zum Referenzkern, Tempo innerhalb 0,3 % zur Filmrate auf der Disc ([12](12-TON.md)) | Hörprobe; echter Ausgabeweg (cubeb/WASAPI); Spielverlauf jenseits des Anfangs |
 | 9 | Import eigener Kopie | Importteil erledigt | Python-Importer und Launcher-Import byteidentisch; RVZ-Leser an der echten Kopie belegt ([09](09-DOL-BEFUNDE.md)) | automatischer Modulbau nach der Auswahl, Fortschritt, Fehlermeldungen |
 
 ## Arbeitspakete
@@ -28,11 +28,11 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 |---|---|---|---|
 | WP0 | Absicherung | teilweise | CI mit Tests und Patch-Prüfung (`checks.yml`, `scripts/check_patches.py`); Eingabefolgen als Fixtures unter `tools/acceptance/fixtures/`; dieses Dokument als Matrix. Offen: restliche Diagnoseskripte aus `build/` des Auftraggebers |
 | WP1 | Ton | **gemessen** | [12-TON.md](12-TON.md); offen: Hörprobe, echter Ausgabeweg, DSP-LLE |
-| WP2 | Toolchain-Paket, Modulbau im Launcher | nicht begonnen, **blockiert** | Vorfrage aus [13](13-STATISCHER-KERN.md) |
+| WP2 | Toolchain-Paket, Modulbau im Launcher | nicht begonnen, **nicht mehr blockiert** | die Vorfrage aus [13](13-STATISCHER-KERN.md) ist mit [16](16-RUECKWEG.md) beantwortet |
 | WP3 | Controller | nicht begonnen | — |
 | WP4 | Launcher, Windows-Anwendung | teilweise | [07](07-ANZEIGE.md), [08](08-WINDOWS-ROM-CONTROLLER.md) |
 | WP5 | Stabilität | teilweise | Stapeltiefe über 30.000 Frames gemessen ([11](11-FRAMERATE-SPIKE.md)); Dauerlauf offen |
-| WP6 | Abnahmelauf | **Grundgeruest steht** | `tools/acceptance` mit zwei Szenarien; `boot` (10/10) und `spielstart` (9/9) am echten Spiel bestanden, 13 Tests ohne Spielkopie ([README](../tools/acceptance/README.md)) |
+| WP6 | Abnahmelauf | **Grundgeruest steht** | `tools/acceptance` mit drei Szenarien; `boot` (10/10), `spielstart` (11/11) und `nativ` (8/8) am echten Spiel bestanden, 19 Tests ohne Spielkopie ([README](../tools/acceptance/README.md)) |
 | WP7 | Adressbasis | **erledigt** | `tools/symbols`, 12.573/12.573 Bezeichner gegengeprüft ([09](09-DOL-BEFUNDE.md)) |
 | WP8 | 16:9 im Rekompilat | **Schritte 1–4 belegt** | `tools/widescreen`, gebackenes DOL ohne SMC-Rückfall, Bildabnahme an Projektion und Bild ([15](15-WIDESCREEN-ABNAHME.md)); offen: Culling, Effekte, Filme |
 | WP9 | Ultrawide | nicht begonnen | — |
@@ -44,18 +44,29 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 | WP15 | 60-FPS-Modus (optional) | zurückgestellt | Entscheidung 6 im Plan |
 | WP16 | Abschluss | nicht begonnen | — |
 
-## Die offene Grundsatzfrage
+## Die Grundsatzfrage ist beantwortet
 
-[13-STATISCHER-KERN.md](13-STATISCHER-KERN.md): In 37 gemessenen Läufen führt
-das rekompilierte Modul höchstens 0,18 % der Gasttakte aus. Den Rest übernimmt
-Dolphins JIT64, der im statischen Kern immer mitläuft. Ursache gemessen: Die
-Ausnahmevektoren des Betriebssystems stehen in keinem DOL, das Spiel springt
-beim ersten Systemaufruf dorthin, und der JIT gibt die Kontrolle praktisch
-nicht zurück. Das berührt die Bedeutung von „nativer Port" unmittelbar und
-gehört vor WP2 geklärt. Die Frage ist in
-[14-FRAGE-AN-MODERNGEKKO.md](14-FRAGE-AN-MODERNGEKKO.md) ausformuliert und
-wartet auf die Entscheidung des Auftraggebers, ob und wie sie abgeschickt
-wird.
+[13-STATISCHER-KERN.md](13-STATISCHER-KERN.md) hatte gemessen, dass das
+rekompilierte Modul höchstens 0,18 % der Gasttakte ausführt, und die Frage vor
+WP2 gestellt. [16-RUECKWEG.md](16-RUECKWEG.md) beantwortet sie: Der Rückweg
+fehlte schlicht — der Ersatz-JIT betrat seinen Dispatcher und kehrte nie
+zurück. Mit `patches/recompcore-rueckweg.patch` fällt sein Anteil an den
+Gasttakten von **99,99 % auf 0,015 %**, und beide Abnahmeszenarien bestehen
+weiter. Ein nativer Port ist mit diesem Unterbau möglich.
+
+Zwei Punkte bleiben offen und sind die nächsten Schritte:
+
+1. **Richtigkeit.** Der Lockstep-Verifizierer schaltet ab, weil das Modul
+   `ppc_set_mem_write_journal` nicht exportiert. Solange das so ist, ist der
+   Rückweg ausdrücklich zu schalten (`STATICRECOMP_YIELD=1`) und nicht
+   Voreinstellung.
+2. **Geschwindigkeit.** Nativ läuft das Spiel derzeit halb so schnell wie mit
+   dem Ersatz-JIT — 7,5 Gasttakte je Dispatch, die Burst-Schleife leistet je
+   Dispatch Arbeit, die je Burst genügen würde.
+
+Die Frage an ModernGekko ([14](14-FRAGE-AN-MODERNGEKKO.md)) bleibt sinnvoll,
+hat aber einen anderen Inhalt: nicht mehr „ist das der vorgesehene Zustand",
+sondern „hier ist ein Patch — ist das der beabsichtigte Weg?".
 
 ## Belegprotokolle
 
@@ -75,6 +86,7 @@ wird.
 | [13](13-STATISCHER-KERN.md) | wie viel wirklich aus dem Rekompilat läuft |
 | [14](14-FRAGE-AN-MODERNGEKKO.md) | die daraus folgende Frage an ModernGekko, vorbereitet |
 | [15](15-WIDESCREEN-ABNAHME.md) | Widescreen an Projektion und Bild abgenommen |
+| [16](16-RUECKWEG.md) | der Rückweg in den statischen Kern: gebaut, gemessen, abgenommen |
 
 Die frühere Chronik dieses Dokuments ist in die Matrizen oben aufgegangen. Was
 darunter folgt, sind die Messwerte der Windows-Sitzungen; sie bleiben als

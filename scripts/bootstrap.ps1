@@ -151,6 +151,19 @@ function Add-Patches {
             File = 'moderngekko-display-settings.patch'
             Target = Join-Path $RefRoot 'ModernGekko'
         }
+        # Rueckweg in den statischen Kern. Der Ersatz-JIT betrat seinen
+        # Dispatcher und kehrte praktisch nie zurueck; das Rekompilat lief
+        # deshalb nach dem ersten Systemaufruf nicht mehr (gemessen: 0,0015 %
+        # der Gasttakte). Der Patch laesst den erzeugten Code an den
+        # Ausnahme-Ausgaengen pruefen, ob das Sprungziel im Modulbereich liegt,
+        # und steigt dann ueber dispatcher_exit aus. Entschieden wird weiterhin
+        # am Tor in StaticRecompCore_Run.cpp. Steht zuletzt, weil er
+        # StaticRecompCore.h gegen den von recompcore-abi-gaps.patch bereits
+        # geaenderten Zustand anfasst. Siehe docs/16-RUECKWEG.md.
+        @{
+            File = 'recompcore-rueckweg.patch'
+            Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
+        }
     )
 
     foreach ($entry in $patches) {

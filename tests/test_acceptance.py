@@ -40,6 +40,47 @@ class CounterTests(unittest.TestCase):
         self.assertEqual(checker.counters(SHUTDOWN + second)["native"], 999)
         self.assertIsNone(checker.counters("kein Kern hier"))
 
+    def test_unknown_counters_do_not_break_the_line(self):
+        # Die Zeile ist im Vorhaben schon zweimal gewachsen. Eine feste
+        # Reihenfolge haette jede Erweiterung in "keine Zaehlerzeile" verwandelt.
+        erweitert = SHUTDOWN.rstrip("\n") + " ticks=1000 neuer_zaehler=7\n"
+        found = checker.counters(erweitert)
+        self.assertEqual(found["native"], 682)
+        self.assertEqual(found["ticks"], 1000)
+        self.assertEqual(found["neuer_zaehler"], 7)
+
+    def test_a_line_without_native_is_not_a_counter_line(self):
+        self.assertIsNone(checker.counters("shutdown: irgendwas=1 anderes=2\n"))
+
+
+class NativeShareTests(unittest.TestCase):
+    """Der Anteil nativ verbuchter Gasttakte -- die Zusage aus docs/16."""
+
+    def _run(self, want, line):
+        scenario = {"name": "t", "frames": 1, "expect": {"min_native_share": want}}
+        return checker.check(scenario, manifest(), line)
+
+    def test_share_is_measured_not_estimated(self):
+        line = SHUTDOWN.rstrip("\n") + " ticks=100000\n"
+        result = self._run(0.5, line.replace("cycles=59591", "cycles=60000"))
+        self.assertTrue(result.passed)
+        self.assertIn("60.00%", result.checks[0][2])
+
+    def test_share_below_the_promise_fails(self):
+        line = SHUTDOWN.rstrip("\n") + " ticks=100000\n"
+        self.assertFalse(self._run(0.9, line.replace("cycles=59591", "cycles=60000")).passed)
+
+    def test_without_ticks_the_promise_cannot_be_checked(self):
+        # Lieber durchfallen als aus der Bildzahl schaetzen: genau diese
+        # Schaetzung war in docs/13 eine Annahme und keine Messung.
+        result = self._run(0.5, SHUTDOWN)
+        self.assertFalse(result.passed)
+        self.assertIn("ticks=", result.checks[0][2])
+
+    def test_without_a_counter_line_the_promise_cannot_be_checked(self):
+        result = self._run(0.5, "nichts")
+        self.assertFalse(result.passed)
+
 
 class CheckTests(unittest.TestCase):
     def test_all_promises_kept(self):

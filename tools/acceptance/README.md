@@ -38,6 +38,7 @@ So steht in einem Szenario genau das, was wirklich zugesagt wird.
 | `reads` | Name → erwarteter Wert (`u32` als `0x…`, sonst Hex der Bytes) |
 | `smc_failed` | Zähler aus der `[staticrecomp] shutdown`-Zeile |
 | `max_fallback` | Obergrenze für Interpreter-Einzelschritte. **Nicht** für native Ausführung verwendbar: siehe [13-STATISCHER-KERN.md](../../docs/13-STATISCHER-KERN.md) |
+| `min_native_share` | Mindestanteil der Gasttakte, die im Rekompilat verbucht wurden: `cycles` geteilt durch `ticks` aus der Zählerzeile. Das ist die Zusage für native Ausführung ([16-RUECKWEG.md](../../docs/16-RUECKWEG.md)). Meldet die Laufzeit kein `ticks=`, fällt die Zusage durch, statt aus der Bildzahl geschätzt zu werden |
 | `audio_min_seconds` | Länge des DSP-Mitschnitts |
 | `audio_max_silence_share` | Anteil stiller Blöcke |
 | `audio_seconds_per_present` | Schranken für Ton je Bildausgabe. Enthält den Startversatz; die reine Steigung liefert `tools/audio rate` |
@@ -49,6 +50,7 @@ So steht in einem Szenario genau das, was wirklich zugesagt wird.
 |---|---|
 | `boot.json` | Start bis Frame 600 ohne Eingabe. Prüft Arena- und Heapgrenzen gegen die in [10-KOPFLOSER-PRUEFSTAND.md](../../docs/10-KOPFLOSER-PRUEFSTAND.md) belegten Werte, dazu Ton und Zähler. |
 | `spielstart.json` | Eingabefolge bis in die Flugplatz-Sequenz (`fixtures/game-start.json`). Prüft unter anderem, dass `gpMarioAddress` (`0x8040E108`) auf ein Objekt in MEM1 zeigt. |
+| `nativ.json` | Kurzer Start, der **den Anteil nativer Ausführung zusagt**. Braucht den Rückweg (`STATICRECOMP_YIELD=1`, [16-RUECKWEG.md](../../docs/16-RUECKWEG.md)) und fällt ohne ihn ausdrücklich durch — sonst wäre die Zusage wertlos. |
 
 Am 2026-09-15 auf Linux mit dem gewöhnlichen Modul ausgeführt:
 
@@ -57,7 +59,15 @@ Am 2026-09-15 auf Linux mit dem gewöhnlichen Modul ausgeführt:
 | `boot` | **bestanden**, 10 von 10 | 607 Bilder, Arena und Heap wie in Dokument 10, 22,35 s Ton, 34,1 % Stille |
 | `spielstart` | **bestanden**, 9 von 9 | 2.401 Bilder, `gpMarioAddress` = `0x80E9AD44`, 82,60 s Ton, 11,5 % Stille |
 
-Die Läufe brauchen rund 1 bzw. 12 Minuten.
+Am selben Tag mit dem Rückweg (`STATICRECOMP_YIELD=1`, Dokument 16) wiederholt:
+
+| Szenario | Ergebnis | Messwerte |
+|---|---|---|
+| `boot` | **bestanden**, 10 von 10 | 605 Bilder, Arena und Heap byteweise gleich, 22,29 s Ton |
+| `spielstart` | **bestanden**, 11 von 11 | 2.399 Bilder, `gpMarioAddress` = `0x80E9AD44` — **derselbe Wert**, 82,62 s Ton |
+| `nativ` | **bestanden**, 8 von 8 | 35,58 % der Gasttakte nativ; ohne Rückweg fällt dasselbe Szenario mit 0,00 % durch |
+
+Die Läufe brauchen rund 1, 12 bzw. 1 Minute.
 
 ## Grenzen
 

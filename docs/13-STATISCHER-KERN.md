@@ -4,6 +4,11 @@ Stand: 2026-09-15. Entstanden als Nebenbefund der Tonmessung
 ([12-TON.md](12-TON.md)) und hier getrennt aufgeschrieben, weil die Frage den
 Kern des Vorhabens betrifft.
 
+> **Dieses Dokument ist der Befund vom 15.09. vormittags. Die daraus folgende
+> Grundsatzfrage ist am selben Tag beantwortet worden:
+> [16-RUECKWEG.md](16-RUECKWEG.md). Zwei Aussagen hier sind durch Messung
+> berichtigt; die Stellen sind unten als Zitatblöcke gekennzeichnet.**
+
 **Kurz:** In keinem der 37 aufgezeichneten Läufe hat das rekompilierte Modul
 mehr als **0,18 %** der Gasttakte ausgeführt. Der Rest lief in Dolphins
 JIT64, der im statischen Kern als Ersatz mitläuft. Die Zeile
@@ -145,6 +150,16 @@ Blocksuche `g_static_recomp_core->DispatchableAt(pc)` und kehrt dann mit
 `nullptr` zurück. Erreicht wird er aber kaum: Der JIT verkettet seine Blöcke
 direkt und ruft `Dispatch()` nur bei einem Fehlschlag der schnellen Suche.
 Über 3.000 Bilder geschah das genau einmal.
+
+> **Berichtigt am 2026-09-15** ([16-RUECKWEG.md](16-RUECKWEG.md)): Dieser
+> Absatz ist in zwei Punkten falsch. Erstens wird der Aufruf von `Dispatch()`
+> in der Voreinstellung gar nicht erzeugt — `JitAsm.cpp` unterdrückt ihn,
+> sobald die Einsprungkarte besteht (`MAIN_LARGE_ENTRY_POINTS_MAP`, Vorgabe
+> wahr). Zweitens gibt er, wenn man ihn erzeugt, die Kontrolle nicht ab:
+> `nullptr` heißt im Dispatcher „kein Block vorhanden", nicht „aussteigen",
+> und der JIT übersetzt die Moduladresse daraufhin selbst. Gemessen mit
+> `LargeEntryPointsMap=False`: 174 statt 7 Verifikationen, `native` weiterhin
+> 682. Es gab in diesem Stand **keinen** Rückweg.
 
 ## Der Lockstep-Verifizierer steht nicht zur Verfügung
 
@@ -296,3 +311,12 @@ Auflösung wäre der Abstand dagegen unmittelbar spürbar.
    Bitmaske je Kachel, die der Assembler-Dispatcher mit zwei Befehlen prüft,
    wäre der naheliegende Ansatz — das ist ein Vorschlag an ModernGekko, keine
    Aufgabe dieses Projekts.
+
+   > **Erledigt und berichtigt am 2026-09-15**
+   > ([16-RUECKWEG.md](16-RUECKWEG.md)): Der letzte Halbsatz war falsch. Das
+   > Projekt pflegt Patches gegen alle drei fremden Bäume; der Rückweg ist als
+   > siebter gebaut (`patches/recompcore-rueckweg.patch`, 177 Zeilen). Er sitzt
+   > nicht im Dispatcher, sondern an den Ausgängen von `rfi` und Ausnahme — dort
+   > genügt ein Bereichsvergleich, weil 99,92 % der Rücksprungziele im
+   > Modulbereich liegen. Der Anteil des Ersatz-JIT fällt damit von 99,99 % auf
+   > 0,015 %.
