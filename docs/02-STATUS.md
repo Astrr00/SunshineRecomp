@@ -32,7 +32,7 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 | WP3 | Controller | nicht begonnen | — |
 | WP4 | Launcher, Windows-Anwendung | teilweise | [07](07-ANZEIGE.md), [08](08-WINDOWS-ROM-CONTROLLER.md) |
 | WP5 | Stabilität | teilweise | Stapeltiefe über 30.000 Frames gemessen ([11](11-FRAMERATE-SPIKE.md)); Dauerlauf offen |
-| WP6 | Abnahmelauf | **Grundgeruest steht** | `tools/acceptance` mit zwei Szenarien; `boot` am echten Spiel bestanden (10/10 Zusagen), 10 Tests ohne Spielkopie ([README](../tools/acceptance/README.md)) |
+| WP6 | Abnahmelauf | **Grundgeruest steht** | `tools/acceptance` mit zwei Szenarien; `boot` (10/10) und `spielstart` (9/9) am echten Spiel bestanden, 13 Tests ohne Spielkopie ([README](../tools/acceptance/README.md)) |
 | WP7 | Adressbasis | **erledigt** | `tools/symbols`, 12.573/12.573 Bezeichner gegengeprüft ([09](09-DOL-BEFUNDE.md)) |
 | WP8 | 16:9 im Rekompilat | Schritte 1–3 belegt | `tools/widescreen`, gebackenes DOL läuft ohne SMC-Rückfall ([09](09-DOL-BEFUNDE.md), [10](10-KOPFLOSER-PRUEFSTAND.md)); Bildabnahme offen |
 | WP9 | Ultrawide | nicht begonnen | — |

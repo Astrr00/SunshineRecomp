@@ -47,10 +47,16 @@ So steht in einem Szenario genau das, was wirklich zugesagt wird.
 | Datei | Inhalt |
 |---|---|
 | `boot.json` | Start bis Frame 600 ohne Eingabe. Prüft Arena- und Heapgrenzen gegen die in [10-KOPFLOSER-PRUEFSTAND.md](../../docs/10-KOPFLOSER-PRUEFSTAND.md) belegten Werte, dazu Ton und Zähler. |
-| `spielstart.json` | Eingabefolge bis in die Flugplatz-Sequenz (`fixtures/game-start.json`). |
+| `spielstart.json` | Eingabefolge bis in die Flugplatz-Sequenz (`fixtures/game-start.json`). Prüft unter anderem, dass `gpMarioAddress` (`0x8040E108`) auf ein Objekt in MEM1 zeigt. |
 
-Am 2026-09-15 auf Linux mit dem gewöhnlichen Modul ausgeführt: `boot`
-bestanden, zehn von zehn Zusagen.
+Am 2026-09-15 auf Linux mit dem gewöhnlichen Modul ausgeführt:
+
+| Szenario | Ergebnis | Messwerte |
+|---|---|---|
+| `boot` | **bestanden**, 10 von 10 | 607 Bilder, Arena und Heap wie in Dokument 10, 22,35 s Ton, 34,1 % Stille |
+| `spielstart` | **bestanden**, 9 von 9 | 2.401 Bilder, `gpMarioAddress` = `0x80E9AD44`, 82,60 s Ton, 11,5 % Stille |
+
+Die Läufe brauchen rund 1 bzw. 12 Minuten.
 
 ## Grenzen
 
@@ -59,6 +65,9 @@ bestanden, zehn von zehn Zusagen.
 - Kein Ton am Gerät. Geprüft wird der emulierte Strom, nicht der Ausgabeweg
   ([12](../../docs/12-TON.md)).
 - Die Zusagen sind so gut wie die Messung, aus der sie stammen. Eine falsche
-  Zusage fällt beim ersten Lauf auf — beim Aufbau dieses Werkzeugs zweimal
-  geschehen: Erst standen die Adressen statt der dort stehenden Werte in
-  `boot.json`.
+  Zusage fällt beim ersten Lauf auf — beim Aufbau dieses Werkzeugs dreimal
+  geschehen: In `boot.json` standen erst die Adressen statt der dort
+  stehenden Werte; in `spielstart.json` waren die Schwellen für Bilder und
+  Tonlänge geraten (3.500 statt 2.401 Bilder, 100 statt 82,6 s); und
+  `gpMarioAddress` wurde zunächst an der falschen Adresse gelesen. Genau
+  dafür ist der Lauf da.
