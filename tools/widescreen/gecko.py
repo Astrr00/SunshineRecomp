@@ -79,17 +79,37 @@ class GeckoCode:
 
 # Das Seitenverhaeltnis im Widescreen-Code.
 #
-# Der Code von gamemasterplc schreibt an genau einer Stelle das
-# Seitenverhaeltnis: 0x80412408 traegt im unveraenderten Spiel 0x3FAAAAAB
-# (4/3) und wird auf 0x3FE38E39 (16/9) gesetzt. Beides ist an der Spielkopie
-# des Auftraggebers nachgelesen und in docs/19-ULTRAWIDE.md festgehalten.
+# ZWEI ANNAHMEN, BEIDE DURCH MESSUNG WIDERLEGT (docs/19-ULTRAWIDE.md):
+#   1. Das Wort an 0x80412408 geht von bitgenau 4/3 auf bitgenau 16/9. Es auf
+#      64:27 zu setzen aendert an der Projektion nichts -- gemessen an vier
+#      gebackenen DOLs und vier FIFO-Aufzeichnungen derselben Szene.
+#   2. Die Einfuegung bei 0x80363138 rechnet mit "mal 3/4", also genau
+#      (4/3)/(16/9). Den Bruch auf 9/16 zu setzen aendert an der Projektion
+#      ebenfalls nichts.
 #
-# Fuer 21:9 und 32:9 ist genau dieses eine Wort zu aendern. Die uebrigen zwoelf
-# Schreibungen sind Sichtweiten und Befehlsoperanden; sie bleiben unberuehrt,
-# weil aus dem Code nicht hervorgeht, wie sie vom Seitenverhaeltnis abhaengen
-# -- 600 wird einmal zu 800 (Faktor 4/3) und zweimal zu 700 (Faktor 7/6).
+# DIE WIRKSAME STELLE IST 0x80416B74. Sie geht von 0,9134614 auf 1,2067341,
+# Verhaeltnis 1,321056 -- und genau um diesen Faktor aendert sich das gemessene
+# Sichtverhaeltnis der Projektion, von 1,3457 auf 1,7778. Die Konstante ist
+# linear im Seitenverhaeltnis:
+#
+#     Konstante = Seitenverhaeltnis * 0,6787879
+#
+# Gegenprobe in beide Richtungen: 16/9 mal 0,6787879 ergibt bitgenau
+# 0x3F9A7643, den Wert, den der Code schreibt; und 0,9134614 geteilt durch
+# 0,6787879 ergibt 1,345724 -- das am unveraenderten Spiel gemessene
+# Sichtverhaeltnis 1,3457.
 ASPECT_ADDRESS = 0x80412408
 ASPECT_16_9 = 0x3FE38E39
+SCALE_ADDRESS = 0x80416B74
+SCALE_16_9 = 0x3F9A7643
+
+
+def _f32(bits: int) -> float:
+    return struct.unpack(">f", struct.pack(">I", bits))[0]
+
+
+# Aus der gemessenen Geraden: Konstante geteilt durch Seitenverhaeltnis.
+SCALE_PER_ASPECT = _f32(SCALE_16_9) / (16.0 / 9.0)
 
 
 def parse_aspect(text: str) -> float:
@@ -119,26 +139,40 @@ def aspect_bits(aspect: float) -> int:
     return struct.unpack(">I", struct.pack(">f", aspect))[0]
 
 
+def scale_bits(aspect: float) -> int:
+    """Die Konstante an 0x80416B74 fuer ein Seitenverhaeltnis."""
+    return aspect_bits(aspect * SCALE_PER_ASPECT)
+
+
+def aspect_of_scale(bits: int) -> float:
+    """Umgekehrt: welches Seitenverhaeltnis diese Konstante ergibt."""
+    return _f32(bits) / SCALE_PER_ASPECT
+
+
 def retarget_aspect(code: GeckoCode, aspect: float) -> GeckoCode:
     """Denselben Code mit einem anderen Seitenverhaeltnis.
 
-    Geprueft wird, dass die erwartete Stelle vorhanden ist und wirklich 16/9
-    traegt. Sonst ist es ein anderer Code als der, gegen den hier gemessen
-    wurde, und Raten waere das Falsche.
+    Geaendert wird genau die eine Stelle, deren Wirkung gemessen ist:
+    0x80416B74. Das Wort an 0x80412408 bleibt auf 16/9 -- es zu aendern hatte
+    in der Messung keine Wirkung, und was es sonst tut, ist offen. Wer es
+    mitaendern will, braucht dafuer erst einen Beleg.
+
+    Geprueft wird vorher, dass beide Stellen so aussehen wie erwartet.
     """
-    treffer = [w for w in code.writes if w.address == ASPECT_ADDRESS]
-    if not treffer:
-        raise GeckoError(
-            f"Der Code '{code.name}' schreibt nichts nach {ASPECT_ADDRESS:#010x}; "
-            "das Seitenverhaeltnis laesst sich so nicht aendern.")
-    if len(treffer) > 1:
-        raise GeckoError(f"Mehrfaches Schreiben nach {ASPECT_ADDRESS:#010x}.")
-    if treffer[0].value != ASPECT_16_9:
-        raise GeckoError(
-            f"Erwartet wurde 16/9 ({ASPECT_16_9:#010x}) an {ASPECT_ADDRESS:#010x}, "
-            f"gefunden {treffer[0].value:#010x}.")
-    bits = aspect_bits(aspect)
-    writes = [Write(w.address, bits) if w.address == ASPECT_ADDRESS else w
+    def genau_eins(addresse, erwartet, was):
+        treffer = [w for w in code.writes if w.address == addresse]
+        if len(treffer) != 1:
+            raise GeckoError(f"Erwartet wurde genau ein Schreiben nach "
+                             f"{addresse:#010x} ({was}), gefunden {len(treffer)}.")
+        if treffer[0].value != erwartet:
+            raise GeckoError(f"Erwartet wurde {erwartet:#010x} an {addresse:#010x} "
+                             f"({was}), gefunden {treffer[0].value:#010x}.")
+
+    genau_eins(ASPECT_ADDRESS, ASPECT_16_9, "Datenkonstante 16/9")
+    genau_eins(SCALE_ADDRESS, SCALE_16_9, "die wirksame Stelle")
+
+    neu = scale_bits(aspect)
+    writes = [Write(w.address, neu) if w.address == SCALE_ADDRESS else w
               for w in code.writes]
     return GeckoCode(name=f"{code.name} @ {aspect:.6f}", writes=writes,
                      injections=list(code.injections),

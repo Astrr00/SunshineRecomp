@@ -4,6 +4,64 @@ Stand: 2026-09-15. WP9. Grundlage ist der 16:9-Befund aus
 [03-WIDESCREEN.md](03-WIDESCREEN.md) und
 [15-WIDESCREEN-ABNAHME.md](15-WIDESCREEN-ABNAHME.md).
 
+## Zwei Irrtümer, durch Messung widerlegt
+
+Zwei naheliegende Annahmen waren falsch. Sie stehen hier, weil die Messungen,
+die sie widerlegen, zugleich die richtige Stelle gefunden haben — und weil
+„naheliegend" in diesem Code offenbar kein guter Ratgeber ist.
+
+**Erste Annahme:** Der Code schreibt an `0x80412408` bitgenau 16/9
+(`0x3FE38E39`) über die 4/3 des Spiels (`0x3FAAAAAB`). Also müsse dort das
+Seitenverhältnis stehen.
+
+**Messung:** Vier DOLs gebacken (4:3, 16:9, 64:27, 32:9), mit jedem dieselbe
+Eingabefolge bis zur Dateiauswahl gefahren, dort je 20 Bilder als FIFO
+aufgezeichnet und die Projektion desselben Bildes verglichen:
+
+| Fassung | Sichtverhältnis der Projektion | waagerechter Maßstab |
+|---|---|---|
+| 4:3 (unverändert) | 1,3457 | 2,041635 |
+| 16:9 | 1,7778 | 1,545456 |
+| 64:27 | **1,7778** | **1,545456** |
+| 32:9 | **1,7778** | **1,545456** |
+
+Bitgleich. Das Wort an `0x80412408` ändert an der Projektion **nichts**.
+
+**Zweite Annahme:** In der größten der zwölf Einfügungen, bei `0x80363138`,
+steht die Umrechnung als ganzzahliger Bruch:
+
+```
+80363160: 1C630003   mulli r3, r3, 3
+80363164: 1CA50003   mulli r5, r5, 3
+80363168: 7C631670   srawi r3, r3, 2
+8036316C: 54A5F0BE   srwi  r5, r5, 2
+```
+
+Also mal **3/4** — und 3/4 ist genau (4/3) geteilt durch (16/9). Der Bruch
+wurde auf 9/16 (64:27) und 3/8 (32:9) gesetzt; im gebackenen DOL steht danach
+nachweislich `mulli r3, r3, 9`. **Die Projektion blieb wieder bei 1,7778.**
+Auch diese Stelle ist es nicht; sie rechnet etwas anderes um.
+
+## Wo das Seitenverhältnis wirklich steht
+
+Bei `0x80416B74`. Der Code setzt dort 0,9134614 auf 1,2067341 — Verhältnis
+**1,321056**. Und genau um diesen Faktor ändert sich das gemessene
+Sichtverhältnis der Projektion, von 1,3457 auf 1,7778 (Verhältnis 1,321). Die
+Konstante ist linear im Seitenverhältnis:
+
+```
+Konstante = Seitenverhältnis × 0,6787879
+```
+
+Die Gerade ist in beide Richtungen geprüft:
+
+| Probe | Ergebnis |
+|---|---|
+| 16/9 × 0,6787879 | `0x3F9A7643` — **bitgenau der Wert, den der Code schreibt** |
+| 0,9134614 ÷ 0,6787879 | 1,345724 — **das am unveränderten Spiel gemessene 1,3457** |
+
+Zwei unabhängige Stützstellen, beide auf sechs Stellen getroffen.
+
 ## Wo das Seitenverhältnis steht
 
 Der Widescreen-Code von gamemasterplc schreibt dreizehn Worte. Gegen die
@@ -31,7 +89,8 @@ festgehalten.
 
 ## Das Werkzeug
 
-`tools/widescreen bake --aspect` ändert genau dieses Wort:
+`tools/widescreen bake --aspect` ändert den Bruch in der Einfügung und das
+dazugehörige Datenwort:
 
 ```bash
 python tools/widescreen --ini <GMSE01.ini> bake \
@@ -39,9 +98,14 @@ python tools/widescreen --ini <GMSE01.ini> bake \
 ```
 
 Angenommen werden Verhältnisse (`16:9`, `64:27`, `32:9`) und Zahlen (`2.37`).
-Geprüft wird vor der Änderung, dass an `0x80412408` wirklich 16/9 steht — ein
-Code, der dort etwas anderes schreibt, ist ein anderer Code, und Raten wäre
-das Falsche.
+Geprüft wird vor der Änderung, dass beide Stellen genau so aussehen wie
+erwartet — ein Code, der dort etwas anderes schreibt, ist ein anderer Code,
+und Raten wäre das Falsche.
+
+**Die schärfste Gegenprobe:** `--aspect 16:9` muss bitgenau das Wort erzeugen,
+das im Code von gamemasterplc steht. Das tut es; ein Test prüft es ohne
+Spielkopie, und das damit gebackene DOL ist bytegleich mit dem ohne die
+Option.
 
 **Zur Bezeichnung:** „21:9" ist ein Marketingname. Wörtlich genommen sind es
 2,3333; die üblichen Ultrawide-Bildschirme haben 64:27 = 2,3704 (3440×1440
@@ -50,27 +114,53 @@ Unterschied nicht.
 
 Vier DOLs wurden erzeugt und das geänderte Wort in jedem nachgelesen:
 
-| Fassung | Wort an `0x80412408` | Wert |
+| Fassung | Wort an `0x80416B74` | ergibt Seitenverhältnis |
 |---|---|---|
-| unverändert (4:3) | `0x3FAAAAAB` | 1,333333 |
-| 16:9 | `0x3FE38E39` | 1,777778 |
-| 64:27 | `0x4017B426` | 2,370370 |
-| 32:9 | `0x40638E39` | 3,555556 |
+| unverändert (4:3) | `0x3F69D89C` = 0,913461 | 1,345724 |
+| 16:9 | `0x3F9A7643` = 1,206734 | 1,777778 |
+| 64:27 | `0x3FCDF304` = 1,608979 | 2,370370 |
+| 32:9 | `0x401A7643` = 2,413468 | 3,555556 |
 
-Die 16:9-Fassung ist die Gegenprobe: Wer `--aspect 16:9` verlangt, muss genau
-das Wort bekommen, das der Code ohnehin schreibt. Das tut sie, bitgenau — und
-ein Test prüft es ohne Spielkopie.
+Das Wort an `0x80412408` bleibt dabei auf 16/9. Es zu ändern hatte in der
+Messung keine Wirkung, und was es sonst tut, ist offen — wer es mitändern
+will, braucht dafür erst einen Beleg.
 
 ## Abnahme an der Projektion
 
-*(Messung läuft; die Zahlen folgen, sobald die vier Läufe abgeschlossen sind.)*
+Dieselbe Eingabefolge bis zur Dateiauswahl, dort je 20 Bilder als FIFO
+aufgezeichnet, Projektion desselben Bildes verglichen:
+
+| Fassung | waagerechter Maßstab | senkrechter Maßstab | Sichtverhältnis | Ziel |
+|---|---|---|---|---|
+| 4:3 (unverändert) | 2,041635 | 2,747478 | 1,3457 | — |
+| 16:9 | 1,545456 | 2,747478 | 1,7778 | 1,777778 |
+| 64:27 | 1,159092 | 2,747478 | **2,3704** | 2,370370 |
+| 32:9 | 0,772728 | 2,747478 | **3,5556** | 3,555556 |
+
+Beide Ultrawide-Verhältnisse werden auf vier Stellen getroffen. Der senkrechte
+Maßstab ist in allen vier Fassungen **bitgleich**: Es wird nicht gezoomt und
+nicht gestreckt, sondern seitlich mehr Sicht freigegeben. Das ist dieselbe
+Eigenschaft, die [15-WIDESCREEN-ABNAHME.md](15-WIDESCREEN-ABNAHME.md) für 16:9
+belegt hat — jetzt auch für 21:9 und 32:9.
+
+Die zweite Projektion derselben Szene (653 Zeichenbefehle, vermutlich eine
+zweite Kamera) folgt demselben Verhältnis: 2,050304 senkrecht in allen
+Fassungen, waagerecht 1,523569 / 1,153296 / 0,864972 / 0,576648.
+
+**Nicht auswertbar ist die Zahl der Zeichenbefehle.** Sie steigt von 2.276 auf
+2.444, aber sie stieg in einer früheren Messreihe genauso, in der sich die
+Projektion gar nicht änderte. Ob bei 32:9 wirklich mehr Geometrie gezeichnet
+wird — also ob das Culling mitgeht — ist damit **nicht** gezeigt.
 
 ## Grenzen
 
-- Geändert wird eine einzige Konstante. Sichtweiten und Culling-Grenzen
-  bleiben auf den 16:9-Werten. Bei 32:9 ist zu erwarten, dass am linken und
-  rechten Rand Dinge fehlen, die dort stehen müssten — das ist zu messen, nicht
-  zu vermuten.
+- Geändert wird eine einzige Konstante. Sichtweiten, Culling-Grenzen und die
+  zwölf Einfügungen bleiben auf den 16:9-Werten. Bei 32:9 ist zu erwarten, dass
+  am linken und rechten Rand Dinge fehlen, die dort stehen müssten. Die
+  Zeichenbefehlzahl taugt dafür nicht als Beleg (siehe oben); das braucht einen
+  Bildvergleich am echten Fenster.
+- Belegt ist die **Projektion**, nicht das **Bild**. Dass die Kamera weiter
+  sieht, heißt noch nicht, dass HUD, Effekte und Filme dabei richtig sitzen.
 - HUD-Verankerung ist für 16:9 in [15](15-WIDESCREEN-ABNAHME.md) am Bild
   abgenommen; für 21:9 und 32:9 steht das aus.
 - Filme bleiben unberührt und werden gestreckt ([15](15-WIDESCREEN-ABNAHME.md),

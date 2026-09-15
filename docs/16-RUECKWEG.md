@@ -92,6 +92,13 @@ Sie wurde nur nie wahrgenommen, weil niemand den Ausstieg erzeugt hat.
    und hinterließ nicht einmal eine Zählerzeile; das darf sich nicht
    wiederholen.
 
+**Der Ausstieg ist stapelsicher, auch aus einem über `CALL` betretenen
+Dispatcher.** `dispatcher_exit` ruft zuerst `ResetStack`, und das ist
+`MOV(64, R(RSP), PPCSTATE(stored_stack_pointer))` (`JitAsm.cpp:252-255`) —
+der beim Eintritt in `Jit64::Run()` gesicherte Stapelzeiger. Offene Rahmen der
+BLR-Optimierung werden damit verworfen, bevor die aufrufererhaltenden Register
+zurückgeholt werden. Dieselbe Ausleitung benutzt der Debugger schon heute.
+
 Der Test sitzt **nicht** im gemeinsamen Dispatcher. Der Untersuchungslauf
 empfahl das, weil `rfi` mit 88 Ereignissen je Bild zu selten schien. Die
 Messung widerlegt es: Sobald der erste Rücksprung greift, führt das Modul

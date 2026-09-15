@@ -273,13 +273,14 @@ if __name__ == "__main__":
 
 
 class AspectTests(unittest.TestCase):
-    """Das Seitenverhaeltnis als einstellbares Wort (docs/19-ULTRAWIDE.md)."""
+    """Das Seitenverhaeltnis an der gemessen wirksamen Stelle (docs/19)."""
 
-    def _code(self, aspect_value=gecko.ASPECT_16_9):
+    def _code(self, aspect_value=gecko.ASPECT_16_9, scale_value=gecko.SCALE_16_9):
         return gecko.GeckoCode(
             name="Widescreen",
             writes=[gecko.Write(0x80416758, 0x44480000),
-                    gecko.Write(gecko.ASPECT_ADDRESS, aspect_value)],
+                    gecko.Write(gecko.ASPECT_ADDRESS, aspect_value),
+                    gecko.Write(gecko.SCALE_ADDRESS, scale_value)],
             injections=[])
 
     def test_parses_ratios_and_numbers(self):
@@ -288,29 +289,45 @@ class AspectTests(unittest.TestCase):
         self.assertAlmostEqual(gecko.parse_aspect("2.37"), 2.37)
         self.assertAlmostEqual(gecko.parse_aspect(" 32 : 9 "), 32 / 9)
 
-    def test_sixteen_nine_reproduces_the_shipped_word(self):
-        # Die Gegenprobe: Wer 16:9 verlangt, muss genau das Wort bekommen,
-        # das der Code ohnehin schreibt. Sonst stimmt die Umrechnung nicht.
-        self.assertEqual(gecko.aspect_bits(gecko.parse_aspect("16:9")),
-                         gecko.ASPECT_16_9)
-
     def test_rejects_nonsense(self):
         for text in ("", "breit", "16:0", "0:9", "0.5", "99:1"):
             with self.assertRaises(gecko.GeckoError):
                 gecko.parse_aspect(text)
 
-    def test_retarget_changes_only_the_aspect_word(self):
+    def test_sixteen_nine_reproduces_the_shipped_word(self):
+        # Die Gegenprobe: 16/9 mal dem gemessenen Faktor muss bitgenau den
+        # Wert ergeben, den der Code von gamemasterplc schreibt.
+        self.assertEqual(gecko.scale_bits(16 / 9), gecko.SCALE_16_9)
+
+    def test_the_measured_four_three_value_comes_back(self):
+        # Rueckrechnung des unveraenderten Spielwerts 0x3F69D89C muss das am
+        # Spiel gemessene Sichtverhaeltnis 1,3457 ergeben.
+        self.assertAlmostEqual(gecko.aspect_of_scale(0x3F69D89C), 1.3457, places=3)
+
+    def test_round_trip(self):
+        for text in ("16:9", "64:27", "32:9", "2.37"):
+            aspect = gecko.parse_aspect(text)
+            self.assertAlmostEqual(gecko.aspect_of_scale(gecko.scale_bits(aspect)),
+                                   aspect, places=5, msg=text)
+
+    def test_retarget_changes_only_the_effective_word(self):
         code = self._code()
         wide = gecko.retarget_aspect(code, 64 / 27)
-        self.assertEqual(len(wide.writes), len(code.writes))
-        geaendert = {w.address: w.value for w in wide.writes}
-        self.assertEqual(geaendert[0x80416758], 0x44480000)
-        self.assertEqual(geaendert[gecko.ASPECT_ADDRESS], 0x4017B426)
+        vorher = {w.address: w.value for w in code.writes}
+        nachher = {w.address: w.value for w in wide.writes}
+        self.assertEqual(set(vorher), set(nachher))
+        geaendert = [a for a in vorher if vorher[a] != nachher[a]]
+        self.assertEqual(geaendert, [gecko.SCALE_ADDRESS])
+        self.assertEqual(nachher[gecko.SCALE_ADDRESS], gecko.scale_bits(64 / 27))
+        # Das Wort an 0x80412408 bleibt bewusst auf 16/9: Es zu aendern hatte
+        # in der Messung keine Wirkung, und was es sonst tut, ist offen.
+        self.assertEqual(nachher[gecko.ASPECT_ADDRESS], gecko.ASPECT_16_9)
 
-    def test_retarget_refuses_an_unexpected_code(self):
-        # Ein Code, der dort nicht 16/9 traegt, ist ein anderer Code.
+    def test_refuses_a_code_that_looks_different(self):
         with self.assertRaises(gecko.GeckoError):
-            gecko.retarget_aspect(self._code(0x3FAAAAAB), 64 / 27)
-        leer = gecko.GeckoCode(name="ohne", writes=[], injections=[])
+            gecko.retarget_aspect(self._code(scale_value=0x3F69D89C), 64 / 27)
         with self.assertRaises(gecko.GeckoError):
-            gecko.retarget_aspect(leer, 64 / 27)
+            gecko.retarget_aspect(self._code(aspect_value=0x3FAAAAAB), 64 / 27)
+        ohne = gecko.GeckoCode(name="ohne", writes=[], injections=[])
+        with self.assertRaises(gecko.GeckoError):
+            gecko.retarget_aspect(ohne, 64 / 27)
