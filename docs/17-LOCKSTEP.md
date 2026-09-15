@@ -5,11 +5,13 @@ Rückweg in den statischen Kern gebaut; dieses Dokument beantwortet die Frage,
 die damit sofort dringend wurde: **Rechnet der nativ ausgeführte Code richtig?**
 
 **Kurz:** Der Verifizierer ist freigeschaltet, und sein Urteil ist lesbar
-geworden. Er meldete zunächst Abweichungen in 3,4 % der geprüften Blöcke. Die
-Ursache ist gefunden und am Einzelfall belegt: **seine eigene Halteregel.**
-Nach deren Korrektur bleiben von 116 Meldungen **4**, und ohne Rückweg
-**keine einzige**. Die 3.404 übrigen Blöcke rechnen so, wie Dolphins
-Interpreter rechnet.
+geworden. Er meldete zunächst Abweichungen in 3,4 % der geprüften Blöcke. Beide
+Ursachen sind gefunden und je am Einzelfall belegt, und **keine von beiden ist
+ein Rechenfehler des Rekompilats**: 112 Meldungen kamen aus seiner eigenen
+Halteregel, die übrigen 4 aus einem Verbuchungsunterschied zwischen Modul und
+Interpreter. Nach Korrektur der Halteregel bleiben von 116 Meldungen **4**,
+ohne Rückweg **keine einzige**. In keiner der 116 Meldungen steht eine
+Abweichung im Rechenergebnis.
 
 ## Warum er abgeschaltet war
 
@@ -161,13 +163,32 @@ if (ppc.pc == end_pc && interp_cycles >= native_charge)
 #4 entry=0x802FE0E4 end=0x802FE0E4: r3,r5 um 8, r28 um 0x10
 ```
 
-Alle vier zeigen dasselbe Muster wie zuvor — Zähler und Zeiger um ein
-Vielfaches der Schrittweite auseinander, das Modul jeweils weiter. Eine
-hundertfach höhere Schrittobergrenze (`STEPCAP=2000000`) ändert nichts; an der
-Begrenzung hängen sie also nicht. Naheliegend ist ein Rest derselben Art: Die
-Taktverbuchung des Moduls und die Taktzählung des Interpreters stimmen bei
-diesen Blöcken nicht genau überein, sodass die neue Bedingung eine Runde zu
-früh greift. **Belegt ist das nicht.**
+Alle vier zeigen dasselbe Muster wie zuvor — Zähler und Zeiger um **genau eine
+Schrittweite** auseinander, das Modul jeweils eine Runde weiter. Eine
+hundertfach höhere Schrittobergrenze (`STEPCAP=2000000`) ändert nichts.
+
+Auch das ist am Einzelfall belegt. `STATICRECOMP_LOCKSTEP_TRACE=0x802FE0E4`:
+
+| Gegenstand | Wert |
+|---|---|
+| Länge einer Schleifenrunde | **29 Befehle** (Kopfbesuche bei Schritt 1, 30, 59, 88, …) |
+| Schritte der Nachbildung | 261 = 9 × 29, also 9 Runden |
+| Runden des Moduls | 10 (`r3` von 0x50 auf 0xa0, Schrittweite 8) |
+| verbuchte Takte des Moduls | **260** |
+
+Das Modul verbucht also rund **26 Takte je Runde, wo der Interpreter 29
+Befehle zählt** — etwa 10 % zu wenig. Die neue Halteregel greift deshalb eine
+Runde zu früh, und der Vergleich sieht genau eine Runde Unterschied.
+
+**Es ist kein Rechenunterschied, sondern ein Verbuchungsunterschied.** Beide
+Seiten durchlaufen dieselbe Befehlsfolge mit denselben Werten; sie hören nur
+an verschiedenen Stellen auf. Damit sind alle 116 ursprünglichen Meldungen
+erklärt, und in keiner einzigen steht eine Abweichung im Rechenergebnis.
+
+Das löst die vier nicht auf — dafür müsste das Modul melden, wie viele
+Befehle es ausgeführt hat, nicht nur wie viele Takte es verbucht hat. Das ist
+eine Änderung an DolRecomp beziehungsweise an der Modul-Schnittstelle und
+gehört in die Frage an ModernGekko ([14](14-FRAGE-AN-MODERNGEKKO.md)).
 
 ## Was daraus noch nicht folgt
 
@@ -205,14 +226,19 @@ sich auf den Spielzustand auswirkt, wäre dabei kaum unbemerkt geblieben.
 
 ## Nächster Schritt
 
-Die vier verbliebenen Meldungen genauso behandeln wie die erste: einzeln
-verfolgen, bis feststeht, ob Modul oder Nachbildung recht hat. `#4`
-(`0x802FE0E4`) ist der kleinste Fall und der beste Anfang.
+Der Verbuchungsunterschied ist der nächste Gegenstand, und er reicht über den
+Verifizierer hinaus: Wenn das Modul je Schleifenrunde rund 10 % zu wenig
+verbucht, läuft die emulierte Uhr gegenüber der geleisteten Arbeit zu schnell.
+[12-TON.md](12-TON.md) hat Ton und Bild innerhalb von 0,3 % zur Filmrate
+gemessen — das schließt einen kleinen systematischen Fehler nicht aus, es
+begrenzt ihn. Zu klären ist, ob 26 gegen 29 für diesen Block richtig ist (der
+Gekko braucht nicht für jeden Befehl einen Takt) oder ob das Modul zu wenig
+verbucht.
 
 **Der Rückweg bleibt bis dahin ausdrücklich zu schalten und nicht
-Voreinstellung.** Vier ungeklärte Meldungen sind wenig, aber „wenig" ist keine
-Abnahme. Die Bedingung aus Dokument 16 lautet: ein Lockstep-Lauf ohne
-ungeklärte Meldungen.
+Voreinstellung.** Dass keine der Meldungen ein Rechenfehler ist, ist ein
+starkes Ergebnis — aber die Bedingung aus Dokument 16 lautet: ein
+Lockstep-Lauf ohne ungeklärte Meldungen, und vier stehen noch.
 
 ## Grenzen
 
