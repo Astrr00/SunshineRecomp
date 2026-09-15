@@ -167,3 +167,18 @@ statischen Kern (483 gegen 72 Bildausgaben je Sekunde Wanduhr, je zwei
 Läufe). Das ist kein Tonbefund, aber es passt nicht zum Zweck der statischen
 Rekompilation und führte zu der Untersuchung in
 [13-STATISCHER-KERN.md](13-STATISCHER-KERN.md).
+Dort steht auch die Erklärung: Der Ersatz-JIT läuft ohne fastmem.
+
+## Einordnung nach Dokument 13
+
+Der Vergleich „statische Rekompilation gegen JIT64" hat rückblickend zwei
+Läufe verglichen, die beide zum allergrößten Teil im JIT liefen
+([13-STATISCHER-KERN.md](13-STATISCHER-KERN.md)). Das ändert nichts daran,
+dass sie abtastwertgleich sind, und für die Tonfrage ist gerade das
+entscheidend: Die Zeitbasis führt der statische Kern selbst
+(`AdvanceGuestTimebase`), ein Fehler dort hätte den Ton in jedem Fall
+verschoben. Der externe Abgleich gegen die Filmrate auf der Disc steht
+ohnehin für sich.
+
+Was der Vergleich **nicht** zeigt: dass nativ aus dem Modul ausgeführter Code
+richtigen Ton erzeugt. Dazu müsste erst nennenswert nativ ausgeführt werden.
