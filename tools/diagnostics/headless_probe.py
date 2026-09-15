@@ -59,6 +59,18 @@ def main() -> int:
     p.add_argument("--sequence", type=Path,
                    help="JSON-Liste von pad_frames-Feldern, nach dem Warten "
                         "abgespielt (wie tests/fixtures/airstrip-camera.json)")
+    p.add_argument("--audio-dump", action="store_true",
+                   help="den emulierten Tonstrom als WAV nach user/Dump/Audio "
+                        "schreiben ([DSP] DumpAudio; AudioCommon startet den "
+                        "Mitschnitt beim Initialisieren des Tonstroms, also "
+                        "auch beim Null-Backend)")
+    p.add_argument("--uncapped", action="store_true",
+                   help="Emulationsgeschwindigkeit aufheben ([Core] EmulationSpeed=0). "
+                        "Nur so sagt die Wanduhr etwas ueber die Leistung eines Kerns; "
+                        "gedrosselt laufen beide Kerne am selben Anschlag.")
+    p.add_argument("--jit", action="store_true",
+                   help="ohne statisches Modul mit JIT64 laufen (Vergleichslauf); "
+                        "--module wird dann nicht uebergeben")
     p.add_argument("--fifo", metavar="FRAMES",  type=int,
                    help="nach dem Warten so viele Frames als DFF aufzeichnen "
                         "(record_fifo aus dem FIFO-Patch; bis 120 erprobt)")
@@ -76,9 +88,12 @@ def main() -> int:
     # Dateilog, damit Codehandler, Boot und Core nachvollziehbar bleiben.
     (user / "Config/Logger.ini").write_text(
         "[Options]\nWriteToFile=True\nVerbosity=3\n"
-        "[Logs]\nActionReplay=True\nBOOT=True\nCORE=True\nCOMMON=True\n")
+        "[Logs]\nActionReplay=True\nBOOT=True\nCORE=True\nCOMMON=True\n"
+        "Audio=True\nAudioInterface=True\nDSPHLE=True\n")
     (user / "Config/Dolphin.ini").write_text(
-        f"[Core]\nEnableCheats={'True' if args.cheats_ini else 'False'}\n")
+        f"[Core]\nEnableCheats={'True' if args.cheats_ini else 'False'}\n"
+        + ("EmulationSpeed=0\n" if args.uncapped else "")
+        + ("[DSP]\nDumpAudio=True\n" if args.audio_dump else ""))
     # Bilder gibt es aus diesem Lauf nicht: Der Software-Renderer braucht eine
     # GL-Praesentation, die ModernGekko unter Linux abschaltet (ENABLE_EGL OFF),
     # und Vulkan kopflos bricht im Frontend mit einem ImGui-Assert ab (kein
@@ -93,19 +108,29 @@ def main() -> int:
            # Ein in config.ini gesetzter Backend gewinnt ueber den kopflosen
            # Null-Backend; deshalb ausdruecklich auf der Befehlszeile.
            "--graphics", "Null", "--audio", "Null"]
-    if args.module:
+    static = bool(args.module) and not args.jit
+    if static:
         cmd += ["--module", str(args.module.resolve())]
-    env = dict(os.environ, MODERNGEKKO_STATICRECOMP="1" if args.module else "0")
-    manifest = {"command": cmd, "reads": {}, "module_sha256":
-                hashlib.sha256(args.module.read_bytes()).hexdigest() if args.module else None}
+    else:
+        # Ohne Modul weist die Laufzeit den Start ab ("no native module was
+        # supplied"). Der Schalter waehlt nicht den Interpreter: SelectCPUCore
+        # nimmt bei MODERNGEKKO_STATICRECOMP=0 unter x86-64 JIT64 (Dok. 04).
+        cmd += ["--allow-interpreter"]
+    env = dict(os.environ, MODERNGEKKO_STATICRECOMP="1" if static else "0")
+    manifest = {"command": cmd, "reads": {}, "cpu": "static" if static else "jit64",
+                "uncapped": bool(args.uncapped),
+                "module_sha256": hashlib.sha256(args.module.read_bytes()).hexdigest()
+                if static else None}
 
     with (root / "stdout.log").open("w") as out, (root / "stderr.log").open("w") as err:
+        started = time.monotonic()
         proc = subprocess.Popen(cmd, env=env, stdout=out, stderr=err)
         manifest["pid"] = proc.pid
         try:
             wait_until(proc, lambda: read_status(auto).get("state") == "running",
                        args.timeout, "warten auf laufenden Core")
             manifest["status_at_start"] = read_status(auto)
+            manifest["wall_at_start"] = round(time.monotonic() - started, 4)
             wait_until(proc, lambda: int(read_status(auto)["frame_count"]) >= args.frames,
                        args.timeout, f"warten auf Frame {args.frames}")
             if args.sequence:
@@ -149,6 +174,11 @@ def main() -> int:
                                     "bytes": dff.stat().st_size,
                                     "sha256": hashlib.sha256(dff.read_bytes()).hexdigest()}
             manifest["status_at_end"] = read_status(auto)
+            manifest["wall_at_end"] = round(time.monotonic() - started, 4)
+            manifest["wall_seconds"] = round(manifest["wall_at_end"]
+                                             - manifest["wall_at_start"], 4)
+            manifest["frames_played"] = (int(manifest["status_at_end"]["frame_count"])
+                                         - int(manifest["status_at_start"]["frame_count"]))
         except Exception as exc:  # noqa: BLE001 - alles landet im Manifest
             manifest["error"] = repr(exc)
         finally:
@@ -160,10 +190,19 @@ def main() -> int:
                     manifest["shutdown_error"] = repr(exc)
                     proc.kill()
             manifest["exit_code"] = proc.poll()
+            if args.audio_dump:
+                # AudioCommon::StopAudioDump schreibt den WAV-Kopf erst beim
+                # Herunterfahren des Tonstroms; darum erst nach proc.wait lesen.
+                dumps = sorted((user / "Dump/Audio").glob("*.wav")) \
+                    if (user / "Dump/Audio").is_dir() else []
+                manifest["audio"] = [{"path": str(d), "bytes": d.stat().st_size,
+                                      "sha256": hashlib.sha256(d.read_bytes()).hexdigest()}
+                                     for d in dumps]
             (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    print(json.dumps({k: manifest[k] for k in ("reads", "fifo", "recordings", "exit_code")
+    print(json.dumps({k: manifest[k] for k in ("reads", "fifo", "recordings", "audio",
+                                              "frames_played", "cpu", "exit_code")
                       if k in manifest} | {"error": manifest.get("error")}, indent=2))
-    return 0 if manifest.get("reads") and "error" not in manifest else 1
+    return 0 if "error" not in manifest else 1
 
 
 if __name__ == "__main__":

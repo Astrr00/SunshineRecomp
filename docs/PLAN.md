@@ -269,6 +269,11 @@ Beleg: CI grün; Fixtures und Manifest im Repository; STATUS als Matrix.
 
 ### WP1 Ton (S–M)
 
+> Stand 2026-09-15: gemessen ([12-TON.md](12-TON.md)). Kein Zeitbasisfehler;
+> das Rekompilat liefert 108,8 s lang abtastwertgleichen Ton wie der
+> JIT-Referenzlauf, Tempo innerhalb 0,3 % zur Filmrate auf der Disc. Offen
+> bleiben die Hörprobe, der echte Ausgabeweg (cubeb/WASAPI) und DSP-LLE.
+
 Ziel: Audio belegen oder als Fehler eingrenzen. Ohne Ton kein spielbarer Port.
 
 1. Log auf `audio backend:` prüfen. Die Laufzeit bevorzugt cubeb und fällt
@@ -287,6 +292,13 @@ Beleg: zwei Aufnahmen (Port, Mainline), Längen- und Spektrumvergleich,
 Protokoll als `docs/09-TON.md`.
 
 ### WP2 Toolchain-Paket und Modulbau im Launcher (L)
+
+> **Vorfrage seit 2026-09-15** ([13-STATISCHER-KERN.md](13-STATISCHER-KERN.md)):
+> In 37 gemessenen Läufen führt das rekompilierte Modul höchstens 0,18 % der
+> Gasttakte aus; den Rest übernimmt Dolphins JIT64, der im statischen Kern
+> immer mitläuft. Der Modulbau ist dabei vollständig (100 % der Textbytes).
+> Bevor der Modulbau in den Launcher wandert, muss geklärt sein, welchen
+> Anteil nativer Ausführung dieser Stand überhaupt vorsieht.
 
 Ziel: Der Endnutzer wählt eine ROM und bekommt ein Modul, ohne selbst
 Werkzeuge zu installieren. Module dürfen nicht verteilt werden (abgeleitetes

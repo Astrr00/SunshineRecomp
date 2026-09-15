@@ -81,7 +81,7 @@ Lauf mit dem unveränderten Modul, aktiviertem Code aus
 | 13 Schreibungen | alle Werte im RAM wie in der INI |
 | 12 Einfügestellen | überall ein Sprung; angesprungener Rumpf bytegenau wie die INI |
 | Codehandler | `GeckoCodes: Using 480 of 3256 bytes` |
-| Laufzeit | `native=255829 fallback=0 smc_failed=1` |
+| Laufzeit | `native=255829 fallback=0 smc_failed=1` (zur Einordnung von `fallback=0` siehe [13](13-STATISCHER-KERN.md)) |
 | SMC | `chunk [0x802C9600,0x802CD600) hash mismatch; interpreter until the original code is restored` |
 
 Das ist genau der in [03-WIDESCREEN.md](03-WIDESCREEN.md) beschriebene
@@ -89,7 +89,16 @@ Befund: Der Widescreen-Code wirkt, und der davon geänderte Chunk läuft im
 Interpreter. Der zweite dort genannte Chunk (`80361600`) wurde in 1800 Frames
 noch nicht angesprungen. Prüfer: `tools/widescreen/verify_ram.py`.
 
-## Befund 3: Das gebackene DOL läuft nativ, ohne SMC-Rückfall
+## Befund 3: Das gebackene DOL läuft ohne SMC-Rückfall
+
+> **Korrektur vom 2026-09-15** ([13-STATISCHER-KERN.md](13-STATISCHER-KERN.md)):
+> Die Überschrift hieß ursprünglich „läuft nativ". Das ist durch die hier
+> genannten Zähler nicht belegt. `fallback` zählt nur Interpreter-Einzelschritte;
+> der Ersatz-JIT (`Jit64`), der immer mitläuft, erhöht keinen Zähler. Die
+> 300.540 nativen Aufrufe dieses Laufs entsprechen 53,7 Millionen Gasttakten,
+> also 0,18 % der emulierten Zeit. Was bleibt: Es gibt keine SMC-Meldung, die
+> Kachelprüfungen bestehen, und die 25 Stellen stehen im RAM richtig. Ob der
+> Widescreen-Code im Modul oder im JIT ausgeführt wurde, ist offen.
 
 Zweites Modul aus dem in [09](09-DOL-BEFUNDE.md) gebackenen DOL
 (`3a655b2e…`, 69 min 50 s), Runner ohne DOL-Prüfsummenzwang, Spielwurzel mit
@@ -108,9 +117,10 @@ dem gebackenen `sys/main.dol`, **keine Cheats**, 1800 Frames:
 Derselbe Spielabschnitt, dieselbe Framezahl: Auf dem Gecko-Weg meldet die
 Laufzeit den Hash-Fehler und interpretiert den geänderten Chunk; mit dem
 gebackenen DOL gibt es keine einzige SMC-Zeile im Log, und die Chunk-Prüfungen
-(40, mehr als beim Gecko-Lauf) bestehen alle. Der Widescreen-Code läuft damit
-**nativ** -- das ist das Ziel von WP8, am laufenden Spiel belegt. Prüfer:
-`tools/widescreen/verify_ram.py --cave 0x80417800`.
+(40, mehr als beim Gecko-Lauf) bestehen alle. Der eingebackene Widescreen-Code
+löst also **keinen SMC-Rückfall** aus -- das war der Zweck der Übung in WP8.
+Dass er im rekompilierten Modul ausgeführt wird, folgt daraus nicht; siehe die
+Korrektur oben. Prüfer: `tools/widescreen/verify_ram.py --cave 0x80417800`.
 
 ## Was für das Produkt daraus folgt
 
