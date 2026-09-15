@@ -1,70 +1,79 @@
-# Status und Testergebnisse
+# Status: Anforderungen, Arbeitspakete, Belege
 
-Stand: 2026-09-09. Umfang: nativer Windows-x86-64-Port (Android entfallen).
+Stand: 2026-09-15. Umfang: nativer Windows-x86-64-Port (Android entfallen).
 
-Hier steht nur, was tatsächlich ausgeführt und beobachtet wurde. Was nicht
-überprüft ist, steht unter "Offen" — nicht unter "Erledigt".
+Dieses Dokument ist die **Anforderungsmatrix** des Vorhabens
+([PLAN.md](PLAN.md), Abschnitt 2.6). Hier steht nur, was tatsächlich
+ausgeführt und beobachtet wurde. Was nicht überprüft ist, steht nicht unter
+„belegt". Die nummerierten Dokumente bleiben die Belegprotokolle; neue
+Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
+„Neuester Stand"-Absätzen zu ergänzen.
 
-## Kurzfassung
+## Anforderungen
 
-**2026-09-10:** [08-WINDOWS-ROM-CONTROLLER.md](08-WINDOWS-ROM-CONTROLLER.md).
-Direkter RVZ-Import im Launcher: 179 Spieldateien bytegleich. Frisch importierte
-Daten starten ohne Savestate mit dem vorhandenen statischen Modul, Bild und
-29,96 FPS, Exit 0. Der vollständige Anwenderablauf „ROM auswählen, automatische
-Einrichtung, spielen“ und umfassende Controller-Belegung fehlen noch.
+| # | Anforderung | Stand | Belegt | Offen |
+|---|---|---|---|---|
+| 1 | Unbegrenzte Framerate | Spike abgeschlossen | Zuordnung der Zeichenbefehle 96–100 %, Bewegung steckt in den Matrizen, synthetisches Zwischenbild gerendert und geprüft, Schnitterkennung kalibriert ([11](11-FRAMERATE-SPIKE.md)) | Umsetzung (WP14); Gegenschnitt in gleicher Szene; Kosten auf echter GPU; Entscheidung des Auftraggebers zu PLAN 5.4 |
+| 2 | Hohe Auflösung, getrennte Ausgabe | weitgehend erledigt | `internal_scale` 1–12 und `output_resolution` getrennt gemessen; randloses Vollbild 1920x1080 und 3440x1440 ([07](07-ANZEIGE.md)) | HiDPI, Mehrmonitor, Launcher-Bedienung, Kantenglättung als Option |
+| 3 | Echtes Widescreen | Grundlage steht | 25/25 Patchstellen im RAM; zusätzliche Sicht ohne Streckung; in das DOL eingebacken, kein SMC-Rückfall ([03](03-WIDESCREEN.md), [09](09-DOL-BEFUNDE.md), [10](10-KOPFLOSER-PRUEFSTAND.md)) | Bildabnahme (HUD, Effekte, Culling), Filme, 21:9 und 32:9; ob der Code nativ oder im JIT läuft, ist offen ([13](13-STATISCHER-KERN.md)) |
+| 4 | HUD-Anker, Menüs, Sequenzen | nicht begonnen | nur mittelbar über die 2D-Konstanten des Gecko-Codes | alles; Adressbasis steht jetzt zur Verfügung (WP7) |
+| 5 | Windows-Anwendung | halb | Win32-Fenster, randloses Vollbild, Alt+Enter, DPI; Launcher gebaut; RVZ-Import 179/179 byteidentisch ([08](08-WINDOWS-ROM-CONTROLLER.md)) | Launcher nie visuell bedient; kein Modulbau im Launcher; kein Paket |
+| 7 | Analoge Schultertaste, Belegung | Produktseite offen | Halb- und Voll-R unterschieden (0 gegen 542,793 Einheiten) ([05](05-FIFO-UND-FLUDD.md)) | reale Controller, Belegungsoberfläche, Totzonen, Tastatur/Maus, Hotplug |
+| 8 | Originalgetreu, Speichern/Laden | Kern trägt | erster Shine, Save/Load, Neustart mit 1 Shine ([06](06-ERSTER-SHINE.md)); **Ton gemessen**: keine Zeitbasisabweichung, 108,8 s abtastwertgleich zum Referenzkern, Tempo innerhalb 0,3 % zur Filmrate auf der Disc ([12](12-TON.md)) | Hörprobe; echter Ausgabeweg (cubeb/WASAPI); Spielverlauf jenseits des Anfangs |
+| 9 | Import eigener Kopie | Importteil erledigt | Python-Importer und Launcher-Import byteidentisch; RVZ-Leser an der echten Kopie belegt ([09](09-DOL-BEFUNDE.md)) | automatischer Modulbau nach der Auswahl, Fortschritt, Fehlermeldungen |
 
-**Aktuelle Anzeige-Fortsetzung:** [07-ANZEIGE.md](07-ANZEIGE.md).
-`internal_scale` und `output_resolution` sind getrennt. Fensterinhalt und
-Ausgabe-PNG bei 1280x720 und 1920x1080 gemessen; randloses Vollbild exakt
-1920x1080 mit Rückkehr zur ursprünglichen Fenstergröße. Vier Profile in v6
-beendeten sich nach den Wechseln regulär (Exit 0). Launcher gebaut, vier
-Testprogramme bestanden. HiDPI/Mehrmonitor, Launcher-Bedienung und vollständige
-Grafikabnahme fehlen weiterhin. Details einschließlich korrigierter eigener
-Fehler und vorheriger gescheiterter Tests in Dokument 07.
+## Arbeitspakete
 
-**Neuester Stand:** [06-ERSTER-SHINE.md](06-ERSTER-SHINE.md). Der erste Boss
-ist besiegt (HP 3 → 2 → 1 → 0), der Shine eingesammelt und regulär gespeichert.
-Ein vollständiger Neustart ohne Savestate zeigt Slot A mit **1 Shine**;
-die anschließende Handlung startet. Damit ist früher Story-Fortschritt über
-Save/Load belegt. Die übrigen Modernisierungen und vollständige Spielabnahme
-bleiben offen. Ältere Hinweise auf den ungeprüften ersten Shine sind überholt.
+| WP | Gegenstand | Stand | Beleg |
+|---|---|---|---|
+| WP0 | Absicherung | teilweise | CI mit Tests und Patch-Prüfung (`checks.yml`, `scripts/check_patches.py`); Eingabefolgen als Fixtures; dieses Dokument als Matrix. Offen: restliche Diagnoseskripte aus `build/` |
+| WP1 | Ton | **gemessen** | [12-TON.md](12-TON.md); offen: Hörprobe, echter Ausgabeweg, DSP-LLE |
+| WP2 | Toolchain-Paket, Modulbau im Launcher | nicht begonnen, **blockiert** | Vorfrage aus [13](13-STATISCHER-KERN.md) |
+| WP3 | Controller | nicht begonnen | — |
+| WP4 | Launcher, Windows-Anwendung | teilweise | [07](07-ANZEIGE.md), [08](08-WINDOWS-ROM-CONTROLLER.md) |
+| WP5 | Stabilität | teilweise | Stapeltiefe über 30.000 Frames gemessen ([11](11-FRAMERATE-SPIKE.md)); Dauerlauf offen |
+| WP6 | Abnahmelauf | nicht begonnen | — |
+| WP7 | Adressbasis | **erledigt** | `tools/symbols`, 12.573/12.573 Bezeichner gegengeprüft ([09](09-DOL-BEFUNDE.md)) |
+| WP8 | 16:9 im Rekompilat | Schritte 1–3 belegt | `tools/widescreen`, gebackenes DOL läuft ohne SMC-Rückfall ([09](09-DOL-BEFUNDE.md), [10](10-KOPFLOSER-PRUEFSTAND.md)); Bildabnahme offen |
+| WP9 | Ultrawide | nicht begonnen | — |
+| WP10 | HUD, Menüs, Sequenzen | nicht begonnen | — |
+| WP11 | Filme | nicht begonnen | — |
+| WP12 | Feinschliff | nicht begonnen | — |
+| WP13 | Framerate-Spike | **abgeschlossen** | [11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md) |
+| WP14 | Framerate-Umsetzung | wartet auf Entscheidung | PLAN 5.4 |
+| WP15 | 60-FPS-Modus (optional) | zurückgestellt | Entscheidung 6 im Plan |
+| WP16 | Abschluss | nicht begonnen | — |
 
-**Neuester Stand:** [05-FIFO-UND-FLUDD.md](05-FIFO-UND-FLUDD.md): FLUDD im Spiel
-aufgenommen, Wasserstrahl/HUD, sichtbarer Reinigungs-/Münz-Effekt und analoge
-R-Unterscheidung (0 versus 542,793 Einheiten Bewegung bei gleichem Stick)
-geprüft. Kein vollständiger Grafik- oder Controllerabschluss. FIFO-Diagnose
-implementiert und getestet; Software-Renderer zeigt dieselben auffälligen
-Schleimanteile, daher keine eindeutige GPU-Fehlerklassifizierung. Normales Save
-ändert die Test-GCI; der gespeicherte Slot wurde nach Neustart ohne Savestate
-erkannt und bis ins Spiel gestartet. Story-Fortschritt mit Shines bleibt
-ungeprüft. Aktueller Lauf pausiert unter `build/gameplay-verification/auto/`.
+## Die offene Grundsatzfrage
 
-**Neueste Diagnose:** [04-GRAFIKDIAGNOSE.md](04-GRAFIKDIAGNOSE.md) dokumentiert
-die CPU-/Renderer-/Sampling-Vergleiche. Kein Grafikfix freigegeben: Ein
-scheinbar sauberes Savestate-Bild verlor einen Spieleffekt; die neu aufgebaute
-Szene zeigt die Artefakte weiterhin. Der neue Render-Probe-Runner wurde mit
-PNG, Manifest und regulärem Exit 0 ausgeführt.
+[13-STATISCHER-KERN.md](13-STATISCHER-KERN.md): In 37 gemessenen Läufen führt
+das rekompilierte Modul höchstens 0,18 % der Gasttakte aus. Den Rest übernimmt
+Dolphins JIT64, der im statischen Kern immer mitläuft. Ursache gemessen: Die
+Ausnahmevektoren des Betriebssystems stehen in keinem DOL, das Spiel springt
+beim ersten Systemaufruf dorthin, und der JIT gibt die Kontrolle praktisch
+nicht zurück. Das berührt die Bedeutung von „nativer Port" unmittelbar und
+gehört vor WP2 geklärt.
 
-**Aktualisierung Widescreen, 2026-09-09:** Der spielseitige GMSE01-Gecko-Code
-ist mit 13/13 direkten Schreibpatches und 12/12 injizierten Nutzcodeblöcken im
-RAM verifiziert. Die Dateiauswahl wurde überwunden; Mario läuft am Delfino
-Airstrip, Kameradrehung, Peach-Dialog und Pause-Menü sind mit Bildern belegt.
-Ein ungepatchter Kaltstart dient als gültige 4:3-Referenz und bestätigt im
-Vergleich zusätzliche horizontale Sicht. Der generische Widescreen-Hack blieb
-aus. **Keine vollständige Abnahme:** Filme, volle HUD-Abdeckung, Effekte,
-systematisches Culling und Ultrawide bleiben offen. Details und lokale
-Bildpfade in [03-WIDESCREEN.md](03-WIDESCREEN.md). Die folgenden älteren
-Meilensteine dokumentieren den Verlauf; ihre offenen Punkte sind teilweise
-durch diesen Nachtrag und die späteren Abschnitte überholt.
+## Belegprotokolle
 
-**Das Spiel startet und rendert unter Windows.** Der statisch rekompilierte
-Spielcode wird geladen, läuft mit stabilen 30,0 FPS und zeichnet die
-Eröffnungssequenz. Belegt durch Fenstertitel-Messung und einen über das
-Automationsprotokoll aufgenommenen Bildschirmabzug.
+| Dokument | Gegenstand |
+|---|---|
+| [01](01-MACHBARKEIT.md) | Architekturentscheidung: statische Recompilation, keine Decompilation |
+| [03](03-WIDESCREEN.md) | Widescreen über den spielseitigen Gecko-Code, 25 Stellen im RAM |
+| [04](04-GRAFIKDIAGNOSE.md) | CPU-, Renderer- und Sampling-Vergleiche; kein Grafikfix freigegeben |
+| [05](05-FIFO-UND-FLUDD.md) | FLUDD, analoge Schultertaste, FIFO-Diagnose |
+| [06](06-ERSTER-SHINE.md) | erster Boss, erster Shine, Save/Load über einen Neustart |
+| [07](07-ANZEIGE.md) | interne Skalierung und Ausgabeauflösung getrennt |
+| [08](08-WINDOWS-ROM-CONTROLLER.md) | RVZ-Import im Launcher, Controller-Ist-Zustand |
+| [09](09-DOL-BEFUNDE.md) | DOL-Aufbau, Symbolkarte, Widescreen ins DOL gebacken |
+| [10](10-KOPFLOSER-PRUEFSTAND.md) | kopfloser Prüfstand, Arena und Stapel, Gecko gegen eingebacken |
+| [11](11-FRAMERATE-SPIKE.md) | Framerate-Spike: Zuordnung, Zwischenbild, Schnitte |
+| [12](12-TON.md) | Ton gemessen |
+| [13](13-STATISCHER-KERN.md) | wie viel wirklich aus dem Rekompilat läuft |
 
-**Es ist trotzdem noch kein fertiger Port.** Eingabe, Ton, Speichern und alle
-Modernisierungen (Framerate, Auflösung, Widescreen, HUD) sind unbelegt bis
-unbearbeitet.
+Die frühere Chronik dieses Dokuments ist in die Matrizen oben aufgegangen. Was
+darunter folgt, sind die Messwerte der Windows-Sitzungen; sie bleiben als
+Beleg stehen.
 
 ## Umgebung
 
