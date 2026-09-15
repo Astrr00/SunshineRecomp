@@ -297,8 +297,10 @@ Protokoll als `docs/09-TON.md`.
 > In 37 gemessenen Läufen führt das rekompilierte Modul höchstens 0,18 % der
 > Gasttakte aus; den Rest übernimmt Dolphins JIT64, der im statischen Kern
 > immer mitläuft. Der Modulbau ist dabei vollständig (100 % der Textbytes).
-> Bevor der Modulbau in den Launcher wandert, muss geklärt sein, welchen
-> Anteil nativer Ausführung dieser Stand überhaupt vorsieht.
+> Ursache gemessen: Die Ausnahmevektoren des Betriebssystems stehen nicht im
+> DOL, das Spiel springt beim ersten Systemaufruf dorthin, und der JIT gibt die
+> Kontrolle praktisch nicht zurück. Bevor der Modulbau in den Launcher wandert,
+> muss das mit ModernGekko geklärt sein: Es entscheidet, was der Port ist.
 
 Ziel: Der Endnutzer wählt eine ROM und bekommt ein Modul, ohne selbst
 Werkzeuge zu installieren. Module dürfen nicht verteilt werden (abgeleitetes

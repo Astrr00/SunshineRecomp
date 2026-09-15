@@ -10,6 +10,14 @@ JIT64, der im statischen Kern als Ersatz mitläuft. Die Zeile
 `native=… fallback=0` belegt das Gegenteil nicht: `fallback` zählt nur
 Interpreter-Einzelschritte, nicht den Ersatz-JIT.
 
+**Die Ursache ist gefunden** (Messung unten): Die Ausnahmevektoren des
+GameCube-Betriebssystems liegen bei `0x80000100` bis `0x80001700`. Sie stehen
+nicht in der `main.dol`, sondern schreibt das Betriebssystem beim Start selbst
+in den Speicher — sie sind also in keinem Modul enthalten. Beim ersten
+Systemaufruf springt das Spiel dorthin, der statische Kern übergibt an JIT64,
+und JIT64 gibt die Kontrolle praktisch nicht zurück. Das passiert vor dem
+ersten ausgegebenen Bild.
+
 ## Was die Zähler bedeuten
 
 `StaticRecompCore.cpp:233` gibt beim Herunterfahren aus:
@@ -91,24 +99,69 @@ in einer Kachel, die Kachel enthält **keine Host-Call-Adresse**, und die Kachel
 ist verifiziert (FNV-1a-64 über den Gast-RAM gegen den im Modul gebackenen
 Hash).
 
-Zwei Eigenheiten fallen dabei auf:
+Der Modulbau deckt die `main.dol` vollständig ab — aber das Spiel führt auch
+Code aus, der nie in der `main.dol` stand: Das GameCube-Betriebssystem
+installiert seine Ausnahmebehandlung beim Start als Speicherinhalt
+(`OSExceptionInit`), unterhalb der ersten Textsektion des DOL
+(`0x80003100`). Jede Ausnahme — Systemaufruf, Dekrementierer, externer
+Interrupt — springt dorthin und damit aus dem Modul heraus.
 
-1. **Host-Calls gelten immer als aktiv.** `dolphin_runtime.cpp:749` setzt
-   `recomp_source.host_call = &ModManager::HostCall` bedingungslos, und
-   `host_call_active` wird nirgends zugewiesen; `RefreshHostCalls`
-   (`SMC.cpp:327-330`) nimmt dann den Vorgabewert `true`. Eine einzige gehookte
-   Adresse sperrt damit eine ganze Kachel von 16 KB.
-2. **Der Weg zurück ist schmal.** `Jit64::Run()` betritt den Dispatcher, der
-   erst bei `CPU::State != Running` zurückkehrt (`Jit.cpp:514`,
-   `JitAsm.cpp:231`). Es gibt eine Rückgabeprüfung in
-   `JitBaseBlockCache::Dispatch()` (`JitCache.cpp:232-240`), aber
-   `StaticRecompShouldYieldAt` (`StaticRecompCore.cpp:32`) wird in beiden
-   Bäumen nirgends aufgerufen.
+`Jit64::Run()` betritt anschließend den Dispatcher, der erst bei
+`CPU::State != Running` zurückkehrt (`Jit.cpp:514`, `JitAsm.cpp:231`).
 
 In den Läufen vom 15.09. stehen die Zähler schon nach **fünf Bildern** auf
 682/17/59.600 und wachsen danach nicht mehr — auch nicht über 4.202 Bilder
 bis in eine Spielszene hinein. Die native Ausführung findet also vollständig
 vor dem ersten ausgegebenen Bild statt.
+
+## Die Messung, die es entscheidet
+
+`DispatchableAt` wurde lokal instrumentiert: Es zählt jeden Aufruf und den
+Grund einer Ablehnung (`tools/diagnostics/staticrecomp-dispatch-probe.patch`,
+rund 40 Zeilen, nur für die Messung). Ergebnis, dreimal identisch — über
+5 und 3.000 Bilder, mit dem gewöhnlichen und mit dem Widescreen-Modul:
+
+```
+[sr-probe] dispatchable_at: total=18 ok=17 forced=0 nochunk=1
+           hostcall=0 unverified=0 last_bad_pc=00000c00
+```
+
+Das ist der ganze Vorgang:
+
+1. **18-mal** wird überhaupt gefragt, ob eine Adresse im Modul liegt.
+2. **17-mal** lautet die Antwort ja; das sind die 17 Bursts mit 682 Blöcken.
+3. **Einmal** lautet sie nein, und zwar bei `pc = 0x00000C00` — dem Vektor für
+   `System Call`. Bei einer Ausnahme schaltet der Prozessor die
+   Adressübersetzung ab, deshalb die reale statt der effektiven Adresse.
+4. Danach wird **nie wieder gefragt**.
+
+Weder Host-Calls (`hostcall=0`) noch fehlgeschlagene Kachelprüfungen
+(`unverified=0`) spielen eine Rolle. Die Vermutung zu `host_call_active` aus
+der ersten Fassung dieses Dokuments ist damit widerlegt.
+
+Der Rückweg in den statischen Kern existiert:
+`JitBaseBlockCache::Dispatch()` (`JitCache.cpp:232-240`) fragt vor jeder
+Blocksuche `g_static_recomp_core->DispatchableAt(pc)` und kehrt dann mit
+`nullptr` zurück. Erreicht wird er aber kaum: Der JIT verkettet seine Blöcke
+direkt und ruft `Dispatch()` nur bei einem Fehlschlag der schnellen Suche.
+Über 3.000 Bilder geschah das genau einmal.
+
+## Warum der statische Kern langsamer ist
+
+`SetStaticRecompFallback(true)` (`JitBase.h:207-217`) schaltet im Ersatz-JIT
+**fastmem ab**:
+
+```cpp
+m_fastmem_enabled = false;
+m_page_table_fastmem_enabled = false;
+jo.fastmem = false;
+jo.fastmem_arena = false;
+```
+
+Jeder Speicherzugriff des Gasts läuft damit über den langsamen Pfad. Das ist
+dieselbe JIT-Maschine wie im Vergleichslauf, nur ohne ihre wichtigste
+Optimierung — und erklärt den unten gemessenen Faktor 6,7, ohne dass er damit
+vollständig aufgeklärt wäre (die Prüfungen je Block kommen hinzu).
 
 ## Was ungeklärt bleibt
 
@@ -122,6 +175,12 @@ Konfiguration ergaben sechsmal 682. Die Ursache des Unterschieds ist **nicht
 gefunden**.
 
 Für die Bewertung ändert das nichts: Auch der beste Lauf bleibt bei 0,18 %.
+Der Mechanismus erklärt allerdings, wie beide Werte zustande kommen können:
+Wie oft der statische Kern wieder zum Zug kommt, hängt daran, wie oft die
+schnelle Blocksuche des JIT fehlschlägt. Alles, was den Blockspeicher des JIT
+leert — Code nachladen, Speicherbereiche ungültig machen — schafft
+Gelegenheiten. 4.619 Bursts gegen 17 sind derselbe Mechanismus bei
+unterschiedlich häufigen Fehlschlägen.
 
 ## Nebenmessung: Geschwindigkeit
 
@@ -160,11 +219,16 @@ Auflösung wäre der Abstand dagegen unmittelbar spürbar.
 
 ## Nächste Schritte
 
-1. Den Verdacht zu den Host-Calls prüfen: Ein Lauf mit einer Fassung, in der
-   `host_call_active` einen Wert bekommt, der ohne Mods `false` ergibt, zeigt
-   unmittelbar, ob die Kachelsperre die Ursache ist.
-2. Den Lockstep-Verifizierer (`STATICRECOMP_LOCKSTEP`) auf einem kurzen
-   Abschnitt laufen lassen; er meldet, welche Adressen nativ ausgeführt
-   werden.
-3. Die Frage an ModernGekko selbst richten, sobald sie sauber formuliert ist:
-   Welcher Anteil nativer Ausführung ist bei diesem Stand zu erwarten?
+1. **Die Frage an ModernGekko richten.** Sie ist jetzt scharf: Der statische
+   Kern verlässt das Modul beim ersten Systemaufruf und kommt nur zurück, wenn
+   die schnelle Blocksuche des JIT fehlschlägt. Ist das der beabsichtigte
+   Zwischenstand, oder fehlt ein Rückweg? `StaticRecompShouldYieldAt`
+   (`StaticRecompCore.cpp:32`) ist definiert, wird aber in keinem der beiden
+   Bäume aufgerufen — das sieht nach einer unfertigen Stelle aus.
+2. **Prüfen, ob die Ausnahmevektoren mitrekompiliert werden können.** Sie
+   entstehen erst zur Laufzeit; ein Modul kann sie nur abdecken, wenn der
+   Recompiler die Vorlagen aus dem DOL erkennt und die installierten Kopien
+   als dieselben Chunks führt.
+3. **Fastmem im Ersatz-JIT bewerten.** Solange das Spiel ohnehin dort läuft,
+   kostet die Abschaltung unmittelbar Leistung. Ob sie für die SMC-Prüfung
+   nötig ist, steht nicht im Quelltext.
