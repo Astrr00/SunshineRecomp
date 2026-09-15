@@ -17,7 +17,8 @@ Ein Szenario ist JSON:
         "min_frames": 500,
         "no_error": true,
         "smc_failed": 0,
-        "reads": {"arena-lo": "0x8040ce48"},
+        "reads": {"arena-lo": "0x817feec0",
+                  "mario": ["0x80000000", "0x81800000"]},   // Bereich statt Wert
         "audio_seconds_per_present": [0.0110, 0.0113],
         "audio_min_seconds": 5.0,
         "audio_max_silence_share": 0.95
@@ -98,6 +99,20 @@ def check(scenario: dict, manifest: dict, stderr: str = "",
             entry = got.get(name)
             if entry is None:
                 result.add(f"Lesung {name}", False, "fehlt im Manifest")
+            elif isinstance(want, list):
+                # Zwei Werte heissen Bereich. Fuer Zeiger ist das ehrlicher als
+                # ein fester Wert: Belegt werden soll, dass das Objekt im
+                # Arbeitsspeicher liegt, nicht wo genau.
+                have = entry.get("u32")
+                low, high = (int(str(b), 0) for b in want)
+                try:
+                    value = int(str(have), 0)
+                except (TypeError, ValueError):
+                    result.add(f"Lesung {name} in [{want[0]}, {want[1]}]", False,
+                               f"kein Wort: {have}")
+                else:
+                    result.add(f"Lesung {name} in [{want[0]}, {want[1]}]",
+                               low <= value <= high, f"war {have}")
             else:
                 have = entry.get("u32", entry.get("hex"))
                 result.add(f"Lesung {name} = {want}", str(have) == str(want), f"war {have}")

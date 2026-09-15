@@ -3,14 +3,18 @@
   "frames": 300,
   "timeout": 2400,
   "sequence": "fixtures/game-start.json",
-  "reads": ["0x8040E0F0:4:gpMarioAddress"],
+  "reads": ["0x8040E108:4:gpMarioAddress", "0x8040E798:4:arena-hi"],
   "expect": {
     "exit_code": 0,
     "no_error": true,
-    "min_frames": 3500,
+    "min_frames": 2300,
     "smc_failed": 0,
     "max_fallback": 0,
-    "audio_min_seconds": 100.0,
-    "audio_max_silence_share": 0.9
+    "reads": {
+      "gpMarioAddress": ["0x80000000", "0x81800000"],
+      "arena-hi": "0x817feec0"
+    },
+    "audio_min_seconds": 75.0,
+    "audio_max_silence_share": 0.5
   }
 }

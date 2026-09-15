@@ -123,3 +123,26 @@ class ScenarioFileTests(unittest.TestCase):
                     address, size, name = spec.split(":")
                     int(address, 0), int(size, 0)
                     self.assertTrue(name)
+
+
+class ReadRangeTests(unittest.TestCase):
+    def test_range_accepts_a_pointer_inside_memory(self):
+        scenario = {"name": "t", "frames": 1, "expect": {
+            "reads": {"mario": ["0x80000000", "0x81800000"]}}}
+        m = manifest(reads={"mario": {"u32": "0x80e9ad44"}})
+        self.assertTrue(checker.check(scenario, m, SHUTDOWN).passed)
+
+    def test_range_rejects_a_pointer_outside(self):
+        scenario = {"name": "t", "frames": 1, "expect": {
+            "reads": {"mario": ["0x80000000", "0x81800000"]}}}
+        for value in ("0x0", "0x1000000", "0x81800004"):
+            with self.subTest(value=value):
+                m = manifest(reads={"mario": {"u32": value}})
+                self.assertFalse(checker.check(scenario, m, SHUTDOWN).passed)
+
+    def test_range_on_a_non_word_read_fails_clearly(self):
+        scenario = {"name": "t", "frames": 1, "expect": {"reads": {"blob": ["0x0", "0x10"]}}}
+        m = manifest(reads={"blob": {"hex": "00112233445566"}})
+        result = checker.check(scenario, m, SHUTDOWN)
+        self.assertFalse(result.passed)
+        self.assertIn("kein Wort", result.checks[0][2])
