@@ -276,7 +276,9 @@ Auflösung wäre der Abstand dagegen unmittelbar spürbar.
 
 ## Nächste Schritte
 
-1. **Die Frage an ModernGekko richten.** Sie ist jetzt scharf: Der statische
+1. **Die Frage an ModernGekko richten.** Ausformuliert in
+   [14-FRAGE-AN-MODERNGEKKO.md](14-FRAGE-AN-MODERNGEKKO.md), nicht
+   abgeschickt — das entscheidet der Auftraggeber. Sie ist jetzt scharf: Der statische
    Kern verlässt das Modul beim ersten Systemaufruf und kommt nur zurück, wenn
    die schnelle Blocksuche des JIT fehlschlägt. Ist das der beabsichtigte
    Zwischenstand, oder fehlt ein Rückweg? `StaticRecompShouldYieldAt`

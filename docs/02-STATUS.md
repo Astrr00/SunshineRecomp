@@ -52,7 +52,10 @@ Dolphins JIT64, der im statischen Kern immer mitläuft. Ursache gemessen: Die
 Ausnahmevektoren des Betriebssystems stehen in keinem DOL, das Spiel springt
 beim ersten Systemaufruf dorthin, und der JIT gibt die Kontrolle praktisch
 nicht zurück. Das berührt die Bedeutung von „nativer Port" unmittelbar und
-gehört vor WP2 geklärt.
+gehört vor WP2 geklärt. Die Frage ist in
+[14-FRAGE-AN-MODERNGEKKO.md](14-FRAGE-AN-MODERNGEKKO.md) ausformuliert und
+wartet auf die Entscheidung des Auftraggebers, ob und wie sie abgeschickt
+wird.
 
 ## Belegprotokolle
 
@@ -70,6 +73,7 @@ gehört vor WP2 geklärt.
 | [11](11-FRAMERATE-SPIKE.md) | Framerate-Spike: Zuordnung, Zwischenbild, Schnitte |
 | [12](12-TON.md) | Ton gemessen |
 | [13](13-STATISCHER-KERN.md) | wie viel wirklich aus dem Rekompilat läuft |
+| [14](14-FRAGE-AN-MODERNGEKKO.md) | die daraus folgende Frage an ModernGekko, vorbereitet |
 
 Die frühere Chronik dieses Dokuments ist in die Matrizen oben aufgegangen. Was
 darunter folgt, sind die Messwerte der Windows-Sitzungen; sie bleiben als
