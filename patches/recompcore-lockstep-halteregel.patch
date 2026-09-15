@@ -1,0 +1,22 @@
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompLockstep_Check.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompLockstep_Check.cpp
+@@ -175,7 +175,18 @@ void StaticRecompLockstepVerifier::LockstepCheck(u32 entry_pc, u32 end_pc, const
+                    steps, before, ppc.gpr[3], ppc.gpr[4], ppc.gpr[5], ppc.msr.Hex,
+                    ppc.GetXER().Hex, ppc.cr.Get(), ppc.spr[SPR_LR], ppc.spr[SPR_CTR]);
+     }
+-    if (ppc.pc == end_pc)
++    // Halten, wenn die Nachbildung die Endadresse erreicht hat -- aber erst,
++    // wenn sie auch so viele Takte verbraucht hat wie das Modul verbucht hat.
++    //
++    // Ohne die zweite Bedingung wird jede Schleife falsch gemeldet, deren Ende
++    // zugleich ihr Kopf ist: Das Modul laeuft bis zur Kachelgrenze, die
++    // Nachbildung haelt nach der ersten Runde, und der Vergleich meldet die
++    // Differenz aller uebrigen Runden als Abweichung. Am Beispiel
++    // 0x80003194 nachgewiesen: Modul 26 Runden (charge=260), Nachbildung 1
++    // Runde; gemeldet wurden r3 (26 mal 0x20 auseinander) und r0 (25
++    // auseinander). Das ist kein Recompilationsfehler, sondern die
++    // Halteregel. Siehe docs/17-LOCKSTEP.md.
++    if (ppc.pc == end_pc && interp_cycles >= native_charge)
+       break;
+     if (ppc.Exceptions != 0)
+       break;

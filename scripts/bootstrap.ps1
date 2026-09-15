@@ -174,6 +174,17 @@ function Add-Patches {
             File = 'moderngekko-scaler.patch'
             Target = Join-Path $RefRoot 'ModernGekko'
         }
+        # Halteregel des Lockstep-Verifizierers. Er liess die Nachbildung
+        # laufen, bis pc == end_pc -- bei einer Schleife, deren Ende zugleich
+        # ihr Kopf ist, also nach der ersten Runde, waehrend das Modul viele
+        # Runden lief. Die Differenz aller uebrigen Runden wurde als Abweichung
+        # gemeldet. Mit der zusaetzlichen Bedingung, dass auch die verbuchten
+        # Takte erreicht sein muessen, fallen 112 von 116 Meldungen weg.
+        # Siehe docs/17-LOCKSTEP.md.
+        @{
+            File = 'recompcore-lockstep-halteregel.patch'
+            Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
+        }
         # Rueckweg in den statischen Kern. Der Ersatz-JIT betrat seinen
         # Dispatcher und kehrte praktisch nie zurueck; das Rekompilat lief
         # deshalb nach dem ersten Systemaufruf nicht mehr (gemessen: 0,0015 %

@@ -58,12 +58,13 @@ weiter. Ein nativer Port ist mit diesem Unterbau möglich.
 
 Zwei Punkte bleiben offen und sind die nächsten Schritte:
 
-1. **Richtigkeit.** Der Lockstep-Verifizierer ist freigeschaltet
-   ([17](17-LOCKSTEP.md)) und meldet Abweichungen in 3,4 % der geprüften
-   Blöcke — bei gleicher Rate und an denselben Blöcken auch **ohne** Rückweg.
-   Ob es Recompilationsfehler oder Artefakte des Verfahrens sind, ist offen.
-   Bis dahin ist der Rückweg ausdrücklich zu schalten (`STATICRECOMP_YIELD=1`)
-   und nicht Voreinstellung.
+1. **Richtigkeit.** Der Lockstep-Verifizierer ist freigeschaltet, und seine
+   Meldungen sind aufgeklärt ([17](17-LOCKSTEP.md)): 112 von 116 kamen aus
+   seiner eigenen Halteregel, die bei Schleifen nach der ersten Runde anhielt.
+   Nach der Korrektur bleiben **4 von 3.408** geprüften Blöcken ungeklärt,
+   ohne Rückweg **keiner von 151**. Bis diese vier geklärt sind, ist der
+   Rückweg ausdrücklich zu schalten (`STATICRECOMP_YIELD=1`) und nicht
+   Voreinstellung.
 2. **Geschwindigkeit.** Nativ läuft das Spiel 1,27-mal langsamer als mit dem
    Ersatz-JIT — nach einer ersten Verbesserung um 52 %
    (`moderngekko-host-call-active.patch`). Der Rest sind Prüfungen je Dispatch,
