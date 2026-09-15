@@ -135,6 +135,12 @@ def command_plan(args: argparse.Namespace) -> int:
 
 def command_bake(args: argparse.Namespace) -> int:
     code = _load_code(args)
+    if args.aspect:
+        aspect = gecko.parse_aspect(args.aspect)
+        code = gecko.retarget_aspect(code, aspect)
+        print(f"Seitenverhaeltnis: {args.aspect} = {aspect:.6f} "
+              f"(0x{gecko.aspect_bits(aspect):08X} nach "
+              f"0x{gecko.ASPECT_ADDRESS:08X})")
     binary = dolfile.read(args.dol)
     original = hashlib.sha256(binary.data).hexdigest()
     print(f"Backe \"{code.name}\" in {args.dol} ...")
@@ -257,6 +263,13 @@ def main(argv: list[str] | None = None) -> int:
     bake_command.add_argument("--onframe", type=Path,
                               help="die direkten Schreibungen zusaetzlich in "
                                    "moderngekko-ports [OnFrame]-Form ablegen")
+    bake_command.add_argument("--aspect",
+                              help="anderes Seitenverhaeltnis als 16:9, etwa "
+                                   "'64:27' fuer Ultrawide oder '32:9'. Geaendert "
+                                   "wird genau das eine Wort, das den Wert traegt "
+                                   "(0x80412408); die uebrigen Schreibungen des "
+                                   "Codes bleiben unberuehrt. Siehe "
+                                   "docs/19-ULTRAWIDE.md")
     bake_command.add_argument("--report", type=Path,
                               help="Befund zusaetzlich als JSON ablegen")
     bake_command.set_defaults(handler=command_bake)

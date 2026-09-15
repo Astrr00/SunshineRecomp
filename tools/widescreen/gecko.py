@@ -25,6 +25,7 @@ Alles andere wird nicht geraten, sondern als nicht unterstuetzt gemeldet.
 from __future__ import annotations
 
 import re
+import struct
 from dataclasses import dataclass, field
 
 # Basisadresse, auf die sich die 24-Bit-Offsets der Codes beziehen.
@@ -74,6 +75,74 @@ class GeckoCode:
     def addresses(self) -> list[int]:
         return ([write.address for write in self.writes] +
                 [injection.address for injection in self.injections])
+
+
+# Das Seitenverhaeltnis im Widescreen-Code.
+#
+# Der Code von gamemasterplc schreibt an genau einer Stelle das
+# Seitenverhaeltnis: 0x80412408 traegt im unveraenderten Spiel 0x3FAAAAAB
+# (4/3) und wird auf 0x3FE38E39 (16/9) gesetzt. Beides ist an der Spielkopie
+# des Auftraggebers nachgelesen und in docs/19-ULTRAWIDE.md festgehalten.
+#
+# Fuer 21:9 und 32:9 ist genau dieses eine Wort zu aendern. Die uebrigen zwoelf
+# Schreibungen sind Sichtweiten und Befehlsoperanden; sie bleiben unberuehrt,
+# weil aus dem Code nicht hervorgeht, wie sie vom Seitenverhaeltnis abhaengen
+# -- 600 wird einmal zu 800 (Faktor 4/3) und zweimal zu 700 (Faktor 7/6).
+ASPECT_ADDRESS = 0x80412408
+ASPECT_16_9 = 0x3FE38E39
+
+
+def parse_aspect(text: str) -> float:
+    """``16:9``, ``64:27`` oder eine Zahl wie ``2.37``."""
+    cleaned = text.strip().replace(",", ".")
+    if ":" in cleaned:
+        left, _, right = cleaned.partition(":")
+        try:
+            width, height = float(left), float(right)
+        except ValueError as error:
+            raise GeckoError(f"Seitenverhaeltnis nicht lesbar: {text}") from error
+        if height <= 0 or width <= 0:
+            raise GeckoError(f"Seitenverhaeltnis muss positiv sein: {text}")
+        value = width / height
+    else:
+        try:
+            value = float(cleaned)
+        except ValueError as error:
+            raise GeckoError(f"Seitenverhaeltnis nicht lesbar: {text}") from error
+    if not 1.0 <= value <= 8.0:
+        raise GeckoError(f"Seitenverhaeltnis ausserhalb 1.0 bis 8.0: {value}")
+    return value
+
+
+def aspect_bits(aspect: float) -> int:
+    """Die 32 Bit der Gleitkommazahl, wie das Spiel sie liest (big endian)."""
+    return struct.unpack(">I", struct.pack(">f", aspect))[0]
+
+
+def retarget_aspect(code: GeckoCode, aspect: float) -> GeckoCode:
+    """Denselben Code mit einem anderen Seitenverhaeltnis.
+
+    Geprueft wird, dass die erwartete Stelle vorhanden ist und wirklich 16/9
+    traegt. Sonst ist es ein anderer Code als der, gegen den hier gemessen
+    wurde, und Raten waere das Falsche.
+    """
+    treffer = [w for w in code.writes if w.address == ASPECT_ADDRESS]
+    if not treffer:
+        raise GeckoError(
+            f"Der Code '{code.name}' schreibt nichts nach {ASPECT_ADDRESS:#010x}; "
+            "das Seitenverhaeltnis laesst sich so nicht aendern.")
+    if len(treffer) > 1:
+        raise GeckoError(f"Mehrfaches Schreiben nach {ASPECT_ADDRESS:#010x}.")
+    if treffer[0].value != ASPECT_16_9:
+        raise GeckoError(
+            f"Erwartet wurde 16/9 ({ASPECT_16_9:#010x}) an {ASPECT_ADDRESS:#010x}, "
+            f"gefunden {treffer[0].value:#010x}.")
+    bits = aspect_bits(aspect)
+    writes = [Write(w.address, bits) if w.address == ASPECT_ADDRESS else w
+              for w in code.writes]
+    return GeckoCode(name=f"{code.name} @ {aspect:.6f}", writes=writes,
+                     injections=list(code.injections),
+                     unsupported=list(code.unsupported))
 
 
 def list_codes(text: str, section: str = "Gecko") -> list[str]:
