@@ -61,7 +61,8 @@ Zwei Punkte bleiben offen und sind die nächsten Schritte:
 1. **Richtigkeit.** Der Lockstep-Verifizierer ist freigeschaltet, und seine
    Meldungen sind aufgeklärt ([17](17-LOCKSTEP.md)): 112 von 116 kamen aus
    seiner eigenen Halteregel, die bei Schleifen nach der ersten Runde anhielt.
-   Nach der Korrektur bleiben **4 von 3.408** geprüften Blöcken, ohne Rückweg
+   Nach der Korrektur bleiben **52 von 16.781** geprüften Blöcken über die
+   ganze Eingabefolge (0,31 %), über 30 Bilder **4 von 3.408**, ohne Rückweg
    **keiner von 151** — und auch diese vier sind aufgeklärt: Das Modul
    verbucht je Schleifenrunde rund 10 % zu wenig Takte (gemessen: 26 gegen
    29), weshalb die Halteregel eine Runde zu früh greift. **In keiner der 116

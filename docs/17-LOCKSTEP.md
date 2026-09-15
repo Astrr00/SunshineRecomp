@@ -190,6 +190,34 @@ Befehle es ausgeführt hat, nicht nur wie viele Takte es verbucht hat. Das ist
 eine Änderung an DolRecomp beziehungsweise an der Modul-Schnittstelle und
 gehört in die Frage an ModernGekko ([14](14-FRAGE-AN-MODERNGEKKO.md)).
 
+## Über die ganze Eingabefolge
+
+Der bisherige Lauf ging über 30 Bilder. Mit der Eingabefolge bis in die
+Flugplatz-Sequenz — 2.396 Bilder, 90,7 s Wanduhr — wird fünfmal mehr geprüft:
+
+```
+[lockstep] summary: checks=16781 reports=52 skipped_fallback=32 skipped_zero=99
+           cap_hits=13 filtered=0 undercharges=0 max_deficit=0 distinct_pcs=16781
+[staticrecomp] yield: yields=327117 rejects=102177 noprogress=0 ...
+[staticrecomp] shutdown: native=421635378 fallback=0 smc_failed=0
+               bursts=5380514 cycles=9302847122 ticks=40046993267
+```
+
+| Gegenstand | Wert |
+|---|---|
+| geprüfte Einsprungadressen | **16.781** (vorher 3.408) |
+| Meldungen | **52** = 0,31 % (vorher 3,4 %) |
+| nativ verbuchte Takte | 9.302.847.122 |
+| `smc_failed`, `fallback`, `noprogress` | 0, 0, 0 |
+| `gpMarioAddress` | `0x80e9ad44` — **derselbe Wert wie in der Referenz** |
+
+Die 52 aufgeteilt: 5 enden an ihrem Anfang, 14 vor ihrem Anfang, 33 dahinter;
+genau eine nennt MMIO. Sie zeigen dasselbe Muster wie die vier analysierten —
+Zähler und Zeiger um ein kleines Vielfaches einer Schrittweite auseinander,
+das Modul jeweils weiter. **Einzeln verfolgt wurden sie nicht**, also ist
+„dieselbe Ursache" hier eine Lesart und kein Beleg. Dass 33 vorwärts enden,
+schließt eine Schleife im Block nicht aus.
+
 ## Was daraus noch nicht folgt
 
 Dass 3.404 von 3.408 Blöcken sauber durchlaufen, ist ein starkes Ergebnis,
@@ -242,9 +270,9 @@ Lockstep-Lauf ohne ungeklärte Meldungen, und vier stehen noch.
 
 ## Grenzen
 
-- Ein Lauf über 30 Bilder. Später Spielverlauf ist nicht geprüft. 3.408
-  Einsprungadressen sind viel gegenüber 151, aber wenig gegenüber den 901.056,
-  die das Modul kennt.
+- Der längste Lauf geht über 2.396 Bilder bis in die Flugplatz-Sequenz.
+  Späterer Spielverlauf ist nicht geprüft. 16.781 Einsprungadressen sind viel
+  gegenüber 151, aber wenig gegenüber den 901.056, die das Modul kennt.
 - Die korrigierte Halteregel ist an einem Fall belegt und an 112 Meldungen
   wirksam. Dass sie in jedem denkbaren Fall richtig hält, ist damit nicht
   gezeigt; sie könnte eine echte Abweichung verdecken, die zufällig erst nach
