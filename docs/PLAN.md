@@ -250,6 +250,12 @@ Reihenfolge, keine Zusagen.
 
 ### WP0 Absicherung (S–M)
 
+> Stand 2026-09-15: Schritt 3 (CI) und Schritt 4 (Dokumentation nach 2.6)
+> erledigt; `02-STATUS.md` ist jetzt die Anforderungsmatrix, HANDOFF verweist
+> darauf. Schritt 1 teilweise: Eingabefolgen liegen unter
+> `tools/acceptance/fixtures/`. Schritt 2 offen — die Diagnoseskripte unter
+> `build/` liegen auf dem Rechner des Auftraggebers.
+
 Ziel: Nichts Reproduzierbares hängt mehr an `build/`.
 
 1. Eingabesequenzen aus den bisherigen Sitzungen (Dateiauswahl, Airstrip,
@@ -401,6 +407,13 @@ Deinstallation geprüft.
 Beleg: Protokolle; keine Hänger in der Matrix; Frametime-Tabelle.
 
 ### WP6 Abnahmelauf (M)
+
+> Stand 2026-09-15: Grundgerüst steht (`tools/acceptance`, README dort). Zwei
+> Szenarien laufen kopflos am echten Spiel und bestehen: `boot` (10 Zusagen)
+> und `spielstart` (9 Zusagen). Die Entscheidungslogik ist ohne Spielkopie
+> getestet. Offen: Szenarien für längere Abschnitte, Bild- und Hörabnahme
+> (bleibt am Windows-Rechner) und die Aufnahme in einen Ablauf, der vor jedem
+> Commit an Laufzeit, Modul oder Mods läuft.
 
 Ein Skript `tools/acceptance/run.py`: Kaltstart ohne Savestate → Titel →
 Dateiauswahl (Slot A neu) → Airstrip → FLUDD → Boss 3 → 2 → 1 → 0 → Shine →
