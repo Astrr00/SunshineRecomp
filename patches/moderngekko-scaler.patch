@@ -1,0 +1,221 @@
+--- a/include/moderngekko/runtime.hpp
++++ b/include/moderngekko/runtime.hpp
+@@ -35,6 +35,10 @@
+   // Initial window client size in physical pixels; zero preserves saved geometry.
+   int output_width = 0;
+   int output_height = 0;
++  // Output resampling kernel, 0..8 (see OutputResamplingMode). Decides how the
++  // internally rendered image is scaled to the window -- the difference between
++  // a soft and a sharp picture at a non-integer factor.
++  std::optional<int> output_resampling;
+ };
+ 
+ struct AudioSettings
+--- a/src/runtime/dolphin_runtime.cpp
++++ b/src/runtime/dolphin_runtime.cpp
+@@ -586,6 +586,10 @@
+       (graphics.output_width < 320 || graphics.output_height < 240 ||
+        graphics.output_width > 8192 || graphics.output_height > 8192))
+     return {{}, RuntimeError{RuntimeErrorCode::InvalidState, "invalid output client size"}};
++  if (graphics.output_resampling &&
++      (*graphics.output_resampling < 0 || *graphics.output_resampling > 8))
++    return {{}, RuntimeError{RuntimeErrorCode::InvalidState,
++                             "invalid output resampling kernel"}};
+   std::lock_guard lock(s_runtime_mutex);
+   if (s_runtime_active)
+     return {
+@@ -711,6 +715,10 @@
+   if (impl->config.graphics.internal_resolution_scale)
+     Config::SetBase(Config::GFX_EFB_SCALE,
+                     *impl->config.graphics.internal_resolution_scale);
++  if (impl->config.graphics.output_resampling)
++    Config::SetBase(Config::GFX_ENHANCE_OUTPUT_RESAMPLING,
++                    static_cast<OutputResamplingMode>(
++                        *impl->config.graphics.output_resampling));
+   Config::SetBase(Config::GFX_SHADER_CACHE, true);
+   Config::SetBase(Config::GFX_SHADER_COMPILATION_MODE,
+                   ShaderCompilationMode::AsynchronousUberShaders);
+--- a/tools/frontend_config.hpp
++++ b/tools/frontend_config.hpp
+@@ -28,6 +28,8 @@
+   bool fullscreen = false;
+   int output_width = 0;
+   int output_height = 0;
++  // Kernel name for the output scaler; empty means "auto".
++  std::string scaler;
+   std::string netplay_nickname = "Player";
+   std::string netplay_address = "127.0.0.1";
+   std::uint16_t netplay_port = 2626;
+@@ -39,6 +41,8 @@
+ 
+ const std::vector<ResolutionOption> &SupportedResolutions();
+ const std::vector<GraphicsBackendOption> &SupportedGraphicsBackends();
++const std::vector<const char *> &SupportedScalers();
++int ScalerKernel(std::string_view name);
+ ConfigResult LoadConfig(const std::filesystem::path &user_directory,
+                         bool create_if_missing);
+ bool SaveConfig(const std::filesystem::path &user_directory,
+--- a/tools/frontend_config.cpp
++++ b/tools/frontend_config.cpp
+@@ -111,6 +111,25 @@
+   return backends;
+ }
+ 
++// Die Kerne des Ausgabe-Skalierers. Der Index ist der Wert, den
++// Data/Sys/Shaders/default_pre_post_process.glsl als resampling_method liest.
++const std::vector<const char *> &SupportedScalers() {
++  static const std::vector<const char *> scalers = {
++      "auto",  "bilinear",       "bspline", "mitchell", "catmull-rom",
++      "sharp-bilinear", "area",  "nearest", "hermite"};
++  return scalers;
++}
++
++int ScalerKernel(std::string_view name) {
++  if (name.empty())
++    return 0;
++  const auto &scalers = SupportedScalers();
++  for (std::size_t i = 0; i < scalers.size(); ++i)
++    if (name == scalers[i])
++      return static_cast<int>(i);
++  return -1;
++}
++
+ ConfigResult LoadConfig(const fs::path &user_directory,
+                         bool create_if_missing) {
+   const fs::path path = user_directory / "config.ini";
+@@ -149,6 +168,10 @@
+     } else if (key == "output_resolution") {
+       if (!ParseOutputSize(value, &config.output_width, &config.output_height))
+         return {.error = "output_resolution must be auto or 320x240..8192x8192"};
++    } else if (key == "scaler") {
++      if (ScalerKernel(value) < 0)
++        return {.error = "unknown scaler: " + value};
++      config.scaler = value;
+     }
+     else if (key == "backend" || key == "graphics_backend") {
+       config.graphics_backend = NormalizeGraphicsBackend(raw_value);
+@@ -288,11 +311,13 @@
+   }
+   file << "# ModernGekko frontend settings\n"
+           "# internal_scale: EFB factor. output_resolution: window client pixels.\n"
++          "# scaler: kernel used to scale the rendered image to the window.\n"
+           "[Video]\n"
+           "internal_scale="
+        << scale << '\n'
+        << "output_resolution=" << (config.output_width == 0 ? "auto" :
+            std::to_string(config.output_width) + "x" + std::to_string(config.output_height)) << '\n'
++       << "scaler=" << (config.scaler.empty() ? "auto" : config.scaler) << '\n'
+        << "backend=" << graphics_backend << '\n'
+        << "fullscreen=" << (config.fullscreen ? "true" : "false") << '\n'
+        << "show_fps_in_title=" << (config.show_fps_in_title ? "true" : "false")
+--- a/tools/moderngekko_run.cpp
++++ b/tools/moderngekko_run.cpp
+@@ -16,6 +16,7 @@
+ #include <fstream>
+ #include <iostream>
+ #include <string>
++#include <string_view>
+ #include <thread>
+ #include <vector>
+ 
+@@ -41,11 +42,34 @@
+ 
+ void HandleStopSignal(int) { s_stop_requested = 1; }
+ 
++// Die Kerne des Ausgabe-Skalierers, in der Reihenfolge, die
++// Data/Sys/Shaders/default_pre_post_process.glsl erwartet. "auto" ueberlaesst
++// das Skalieren der Grafikkarte und ist nicht gammakorrekt; alles andere
++// rechnet in linearem Licht.
++struct ScalerOption {
++  const char *name;
++  int value;
++};
++constexpr ScalerOption kScalers[] = {
++    {"auto", 0},         {"bilinear", 1},       {"bspline", 2},
++    {"mitchell", 3},     {"catmull-rom", 4},    {"sharp-bilinear", 5},
++    {"area", 6},         {"nearest", 7},        {"hermite", 8},
++};
++
++int ScalerValue(std::string_view name) {
++  for (const ScalerOption &option : kScalers)
++    if (name == option.name)
++      return option.value;
++  return -1;
++}
++
+ void Usage() {
+   std::cerr << "usage: " MODERNGEKKO_RUNNER_NAME
+                " [--game <extracted-root>] [--module <path>]\n"
+                "       [--user-dir <path>] [--title <text>] [--load-state <path>]\n"
+                "       [--graphics <backend>] [--audio <backend>]\n"
++               "       [--scaler <auto|bilinear|bspline|mitchell|catmull-rom|\n"
++               "                  sharp-bilinear|area|nearest|hermite>]\n"
+                "       [--mods <directory>] [--no-mods]\n"
+                "       [--wayland] [-X11] [--headless] [--allow-interpreter]\n"
+                "       [--netplay-host | --netplay-join <host>] "
+@@ -181,6 +205,16 @@
+       config.graphics.backend = value("--graphics");
+     else if (arg == "--audio")
+       config.audio.backend = value("--audio");
++    else if (arg == "--scaler") {
++      const std::string name = value("--scaler");
++      const int kernel = ScalerValue(name);
++      if (kernel < 0) {
++        std::cerr << "unknown scaler: " << name << '\n';
++        Usage();
++        return 2;
++      }
++      config.graphics.output_resampling = kernel;
++    }
+     else if (arg == "--mods")
+       config.mod_directories.emplace_back(value("--mods"));
+     else if (arg == "--no-mods")
+@@ -248,6 +282,10 @@
+   config.graphics.internal_resolution_scale = frontend_config.dolphin_scale;
+   config.graphics.output_width = frontend_config.output_width;
+   config.graphics.output_height = frontend_config.output_height;
++  // Die Befehlszeile gewinnt ueber config.ini, wie bei --graphics.
++  if (!config.graphics.output_resampling && !frontend_config.scaler.empty())
++    config.graphics.output_resampling =
++        moderngekko::frontend::ScalerKernel(frontend_config.scaler);
+   if (config.graphics.backend.empty())
+     config.graphics.backend = frontend_config.graphics_backend;
+   config.fullscreen = frontend_config.fullscreen;
+--- a/tests/frontend_config_test.cpp
++++ b/tests/frontend_config_test.cpp
+@@ -165,6 +165,35 @@
+     { std::ofstream file(directory / "config.ini"); file << contents; }
+     if (moderngekko::frontend::LoadConfig(directory, false)) return 24;
+   }
++  // Ausgabe-Skalierer: Namen statt Zahlen, ungueltige Namen fallen durch, und
++  // der gespeicherte Wert kommt unveraendert zurueck.
++  if (moderngekko::frontend::ScalerKernel("auto") != 0 ||
++      moderngekko::frontend::ScalerKernel("") != 0 ||
++      moderngekko::frontend::ScalerKernel("sharp-bilinear") != 5 ||
++      moderngekko::frontend::ScalerKernel("nearest") != 7 ||
++      moderngekko::frontend::ScalerKernel("hermite") != 8 ||
++      moderngekko::frontend::ScalerKernel("unsinn") != -1)
++    return 30;
++  if (moderngekko::frontend::SupportedScalers().size() != 9)
++    return 31;
++  {
++    std::ofstream file(directory / "config.ini");
++    file << "internal_scale=3\nscaler=catmull-rom\n";
++  }
++  const auto scaled = moderngekko::frontend::LoadConfig(directory, false);
++  if (!scaled || scaled.scaler != "catmull-rom")
++    return 32;
++  auto roundtrip = scaled;
++  roundtrip.scaler = "hermite";
++  if (!moderngekko::frontend::SaveConfig(directory, roundtrip, &error)) return 33;
++  const auto reloaded = moderngekko::frontend::LoadConfig(directory, false);
++  if (!reloaded || reloaded.scaler != "hermite") return 34;
++  {
++    std::ofstream file(directory / "config.ini");
++    file << "internal_scale=3\nscaler=lanczos\n";
++  }
++  if (moderngekko::frontend::LoadConfig(directory, false)) return 35;
++
+   fs::remove_all(directory);
+   return 0;
+ }

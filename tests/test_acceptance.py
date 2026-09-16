@@ -6,6 +6,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 _TOOLS = Path(__file__).resolve().parent.parent / "tools"
 sys.path.insert(0, str(_TOOLS / "acceptance"))
@@ -39,6 +40,47 @@ class CounterTests(unittest.TestCase):
         second = SHUTDOWN.replace("native=682", "native=999")
         self.assertEqual(checker.counters(SHUTDOWN + second)["native"], 999)
         self.assertIsNone(checker.counters("kein Kern hier"))
+
+    def test_unknown_counters_do_not_break_the_line(self):
+        # Die Zeile ist im Vorhaben schon zweimal gewachsen. Eine feste
+        # Reihenfolge haette jede Erweiterung in "keine Zaehlerzeile" verwandelt.
+        erweitert = SHUTDOWN.rstrip("\n") + " ticks=1000 neuer_zaehler=7\n"
+        found = checker.counters(erweitert)
+        self.assertEqual(found["native"], 682)
+        self.assertEqual(found["ticks"], 1000)
+        self.assertEqual(found["neuer_zaehler"], 7)
+
+    def test_a_line_without_native_is_not_a_counter_line(self):
+        self.assertIsNone(checker.counters("shutdown: irgendwas=1 anderes=2\n"))
+
+
+class NativeShareTests(unittest.TestCase):
+    """Der Anteil nativ verbuchter Gasttakte -- die Zusage aus docs/16."""
+
+    def _run(self, want, line):
+        scenario = {"name": "t", "frames": 1, "expect": {"min_native_share": want}}
+        return checker.check(scenario, manifest(), line)
+
+    def test_share_is_measured_not_estimated(self):
+        line = SHUTDOWN.rstrip("\n") + " ticks=100000\n"
+        result = self._run(0.5, line.replace("cycles=59591", "cycles=60000"))
+        self.assertTrue(result.passed)
+        self.assertIn("60.00%", result.checks[0][2])
+
+    def test_share_below_the_promise_fails(self):
+        line = SHUTDOWN.rstrip("\n") + " ticks=100000\n"
+        self.assertFalse(self._run(0.9, line.replace("cycles=59591", "cycles=60000")).passed)
+
+    def test_without_ticks_the_promise_cannot_be_checked(self):
+        # Lieber durchfallen als aus der Bildzahl schaetzen: genau diese
+        # Schaetzung war in docs/13 eine Annahme und keine Messung.
+        result = self._run(0.5, SHUTDOWN)
+        self.assertFalse(result.passed)
+        self.assertIn("ticks=", result.checks[0][2])
+
+    def test_without_a_counter_line_the_promise_cannot_be_checked(self):
+        result = self._run(0.5, "nichts")
+        self.assertFalse(result.passed)
 
 
 class CheckTests(unittest.TestCase):
@@ -185,6 +227,66 @@ class StackTests(unittest.TestCase):
     def test_missing_read_is_reported(self):
         scenario = {"name": "t", "frames": 1, "expect": {"stack_low_water": {
             "read": "luecke", "base": "0x80417800", "floor": "0x80417918"}}}
+        result = checker.check(scenario, manifest(), SHUTDOWN)
+        self.assertFalse(result.passed)
+        self.assertIn("fehlt", result.checks[0][2])
+
+
+class ProjectionAspectTests(unittest.TestCase):
+    """Die Zusage fuer das Sichtverhaeltnis (docs/19-ULTRAWIDE.md)."""
+
+    @staticmethod
+    def _dff(path, waagerecht: float, senkrecht: float, ortho: bool = False):
+        """Eine synthetische Aufzeichnung mit genau einer Projektion."""
+        import struct
+        sys.path.insert(0, str(_TOOLS / "framerate"))
+        import fifo  # noqa: PLC0415
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_framerate import CP_STATE, build_dff, primitive, xf_load  # noqa: PLC0415
+
+        def bits(value):
+            return struct.unpack(">I", struct.pack(">f", value))[0]
+
+        stream = (xf_load(0x1020, [bits(waagerecht), 0, bits(senkrecht), 0, 0, 0])
+                  + xf_load(0x1026, [1 if ortho else 0])
+                  + primitive(0x90, 3, 12))
+        path.write_bytes(build_dff([stream], [[]], CP_STATE))
+
+    def _run(self, spec, **kwargs):
+        with TemporaryDirectory() as tmp:
+            dff = Path(tmp) / "szene.dff"
+            self._dff(dff, **kwargs)
+            m = manifest()
+            m["recordings"] = [{"path": str(dff), "frames": 1}]
+            scenario = {"name": "t", "frames": 1, "expect": {"projection_aspect": spec}}
+            return checker.check(scenario, m, SHUTDOWN)
+
+    def test_sixteen_nine_is_accepted(self):
+        result = self._run({"recording": "szene", "frame": 0, "value": 16 / 9},
+                           waagerecht=1.545456, senkrecht=2.747478)
+        self.assertTrue(result.passed, result.checks)
+
+    def test_a_wrong_aspect_fails(self):
+        result = self._run({"recording": "szene", "frame": 0, "value": 64 / 27},
+                           waagerecht=1.545456, senkrecht=2.747478)
+        self.assertFalse(result.passed)
+        self.assertIn("1.7777", result.checks[0][2])
+
+    def test_ultrawide_is_accepted(self):
+        result = self._run({"recording": "szene", "frame": 0, "value": 64 / 27},
+                           waagerecht=1.159092, senkrecht=2.747478)
+        self.assertTrue(result.passed, result.checks)
+
+    def test_an_orthographic_frame_has_no_aspect(self):
+        # Filme und HUD zeichnen orthografisch; daran laesst sich nichts messen.
+        result = self._run({"recording": "szene", "frame": 0, "value": 16 / 9},
+                           waagerecht=1.545456, senkrecht=2.747478, ortho=True)
+        self.assertFalse(result.passed)
+        self.assertIn("keine perspektivische", result.checks[0][2])
+
+    def test_a_missing_recording_is_a_failure_not_a_pass(self):
+        scenario = {"name": "t", "frames": 1,
+                    "expect": {"projection_aspect": {"recording": "fehlt", "value": 1.0}}}
         result = checker.check(scenario, manifest(), SHUTDOWN)
         self.assertFalse(result.passed)
         self.assertIn("fehlt", result.checks[0][2])

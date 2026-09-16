@@ -1,0 +1,80 @@
+[
+  {
+    "frames": 10,
+    "start": 1
+  },
+  {
+    "frames": 300
+  },
+  {
+    "frames": 4,
+    "a": 1
+  },
+  {
+    "frames": 200
+  },
+  {
+    "frames": 4,
+    "a": 1
+  },
+  {
+    "frames": 200
+  },
+  {
+    "frames": 4,
+    "a": 1
+  },
+  {
+    "frames": 200
+  },
+  {
+    "frames": 4,
+    "a": 1
+  },
+  {
+    "frames": 200
+  },
+  {
+    "frames": 15,
+    "main_x": 1
+  },
+  {
+    "frames": 100
+  },
+  {
+    "frames": 4,
+    "a": 1
+  },
+  {
+    "frames": 300
+  },
+  {
+    "frames": 15,
+    "main_x": -1
+  },
+  {
+    "frames": 100
+  },
+  {
+    "frames": 4,
+    "a": 1
+  },
+  {
+    "frames": 300
+  },
+  {
+    "record": 20,
+    "name": "szene"
+  },
+  {
+    "frames": 6,
+    "dpad_right": 1
+  },
+  {
+    "frames": 100
+  },
+  {
+    "frames": 4,
+    "a": 1
+  }
+]

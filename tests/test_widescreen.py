@@ -270,3 +270,106 @@ class RealCodeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AspectTests(unittest.TestCase):
+    """Das Seitenverhaeltnis an der gemessen wirksamen Stelle (docs/19)."""
+
+    def _code(self, aspect_value=gecko.ASPECT_16_9, scale_value=gecko.SCALE_16_9,
+              hud_value=gecko.HUD_WIDTH_16_9):
+        return gecko.GeckoCode(
+            name="Widescreen",
+            writes=[gecko.Write(gecko.HUD_WIDTH_ADDRESS, hud_value),
+                    gecko.Write(gecko.ASPECT_ADDRESS, aspect_value),
+                    gecko.Write(gecko.SCALE_ADDRESS, scale_value)]
+                   + [gecko.Write(a, gecko.EDGE_16_9) for a in gecko.EDGE_ADDRESSES],
+            injections=[])
+
+    def test_parses_ratios_and_numbers(self):
+        self.assertAlmostEqual(gecko.parse_aspect("16:9"), 16 / 9)
+        self.assertAlmostEqual(gecko.parse_aspect("64:27"), 64 / 27)
+        self.assertAlmostEqual(gecko.parse_aspect("2.37"), 2.37)
+        self.assertAlmostEqual(gecko.parse_aspect(" 32 : 9 "), 32 / 9)
+
+    def test_rejects_nonsense(self):
+        for text in ("", "breit", "16:0", "0:9", "0.5", "99:1"):
+            with self.assertRaises(gecko.GeckoError):
+                gecko.parse_aspect(text)
+
+    def test_sixteen_nine_reproduces_the_shipped_word(self):
+        # Die Gegenprobe: 16/9 mal dem gemessenen Faktor muss bitgenau den
+        # Wert ergeben, den der Code von gamemasterplc schreibt.
+        self.assertEqual(gecko.scale_bits(16 / 9), gecko.SCALE_16_9)
+
+    def test_the_measured_four_three_value_comes_back(self):
+        # Rueckrechnung des unveraenderten Spielwerts 0x3F69D89C muss das am
+        # Spiel gemessene Sichtverhaeltnis 1,3457 ergeben.
+        self.assertAlmostEqual(gecko.aspect_of_scale(0x3F69D89C), 1.3457, places=3)
+
+    def test_round_trip(self):
+        for text in ("16:9", "64:27", "32:9", "2.37"):
+            aspect = gecko.parse_aspect(text)
+            self.assertAlmostEqual(gecko.aspect_of_scale(gecko.scale_bits(aspect)),
+                                   aspect, places=5, msg=text)
+
+    def test_retarget_changes_only_the_camera_by_default(self):
+        # Vorgabe ist die Kamera allein: Die 2D-Ebene ist unfertig (die linke
+        # Kante wandert nicht mit) und wuerde das Bild unsymmetrisch machen.
+        code = self._code()
+        schmal = gecko.retarget_aspect(code, 64 / 27)
+        nachher = {w.address: w.value for w in schmal.writes}
+        geaendert = sorted(a for a in nachher
+                           if nachher[a] != {w.address: w.value for w in code.writes}[a])
+        self.assertEqual(geaendert, [gecko.SCALE_ADDRESS])
+
+    def test_retarget_changes_the_two_measured_words(self):
+        code = self._code()
+        wide = gecko.retarget_aspect(code, 64 / 27, hud=True)
+        vorher = {w.address: w.value for w in code.writes}
+        nachher = {w.address: w.value for w in wide.writes}
+        self.assertEqual(set(vorher), set(nachher))
+        geaendert = sorted(a for a in vorher if vorher[a] != nachher[a])
+        self.assertEqual(geaendert, sorted([gecko.SCALE_ADDRESS, gecko.HUD_WIDTH_ADDRESS,
+                                            *gecko.EDGE_ADDRESSES]))
+        for adresse in gecko.EDGE_ADDRESSES:
+            self.assertEqual(nachher[adresse], gecko.edge_bits(64 / 27))
+        self.assertEqual(nachher[gecko.SCALE_ADDRESS], gecko.scale_bits(64 / 27))
+        self.assertEqual(nachher[gecko.HUD_WIDTH_ADDRESS], gecko.hud_width_bits(64 / 27))
+        # Das Wort an 0x80412408 bleibt bewusst auf 16/9: Es zu aendern hatte
+        # in der Messung keine Wirkung, und was es sonst tut, ist offen.
+        self.assertEqual(nachher[gecko.ASPECT_ADDRESS], gecko.ASPECT_16_9)
+
+    def test_the_hud_can_be_left_alone(self):
+        # Die Gegenprobe, mit der belegt ist, dass die 2D-Ebene sonst auf dem
+        # 16:9-Wert stehen bleibt.
+        wide = gecko.retarget_aspect(self._code(), 64 / 27)
+        nachher = {w.address: w.value for w in wide.writes}
+        self.assertEqual(nachher[gecko.HUD_WIDTH_ADDRESS], gecko.HUD_WIDTH_16_9)
+        self.assertEqual(nachher[gecko.SCALE_ADDRESS], gecko.scale_bits(64 / 27))
+
+    def test_sixteen_nine_reproduces_the_shipped_hud_width(self):
+        self.assertEqual(gecko.hud_width_bits(16 / 9), gecko.HUD_WIDTH_16_9)
+
+    def test_sixteen_nine_reproduces_the_shipped_edge(self):
+        self.assertEqual(gecko.edge_bits(16 / 9), gecko.EDGE_16_9)
+
+    def test_the_four_three_edge_comes_back(self):
+        import struct
+        kante = struct.unpack(">f", struct.pack(">I", gecko.edge_bits(4 / 3)))[0]
+        self.assertAlmostEqual(kante, 600.0, places=4)
+
+    def test_the_four_three_hud_width_comes_back(self):
+        # Der unveraenderte Spielwert ist 600; die Gerade muss ihn treffen.
+        import struct
+        breite = struct.unpack(">f", struct.pack(
+            ">I", gecko.hud_width_bits(4 / 3)))[0]
+        self.assertAlmostEqual(breite, 600.0, places=4)
+
+    def test_refuses_a_code_that_looks_different(self):
+        with self.assertRaises(gecko.GeckoError):
+            gecko.retarget_aspect(self._code(scale_value=0x3F69D89C), 64 / 27)
+        with self.assertRaises(gecko.GeckoError):
+            gecko.retarget_aspect(self._code(aspect_value=0x3FAAAAAB), 64 / 27)
+        ohne = gecko.GeckoCode(name="ohne", writes=[], injections=[])
+        with self.assertRaises(gecko.GeckoError):
+            gecko.retarget_aspect(ohne, 64 / 27)

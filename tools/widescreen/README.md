@@ -68,6 +68,35 @@ Die Spielkopie bleibt unveraendert; `bake` schreibt eine neue Datei. Mit
 `--onframe` zusaetzlich die 13 Schreibungen in der `[OnFrame]`-Form ablegen, die
 `moderngekko-port` von sich aus versteht.
 
+## Ein anderes Seitenverhaeltnis
+
+```bash
+python tools/widescreen --ini <GMSE01.ini> bake \
+    --dol build/game/sys/main.dol --to build/ultrawide.dol --aspect 64:27
+```
+
+Geaendert werden die beiden Stellen, deren Wirkung gemessen ist:
+
+Geaendert wird `0x80416B74`, die Projektion der Kamera. Sie ist linear im
+Seitenverhaeltnis (Faktor 0,6787879), an zwei Stuetzstellen geprueft und
+trifft den Auslieferungswert bitgenau. Am Spiel abgenommen: 64:27 misst 2,3704
+und 32:9 misst 3,5556 bei bitgleichem senkrechtem Maszstab.
+
+Die **2D-Ebene folgt nicht** und bleibt deshalb unberuehrt. `--hud-2d`
+skaliert sie zum Weitersuchen mit -- unfertig: Die rechte Kante wandert dann
+mit, die linke bleibt bei -100 stehen, und das Bild wird unsymmetrisch. Siehe
+[../../docs/19-ULTRAWIDE.md](../../docs/19-ULTRAWIDE.md).
+
+Zwei andere, naheliegendere Stellen sind es **nicht** -- das Wort an
+`0x80412408` (bitgenau 4/3 auf 16/9) und der Bruch 3/4 in der Einfuegung bei
+`0x80363138`. Beide wurden geaendert und gemessen; die Projektion blieb
+unveraendert. Die Herleitung steht in
+[../../docs/19-ULTRAWIDE.md](../../docs/19-ULTRAWIDE.md).
+
+`--aspect 16:9` erzeugt bitgenau das DOL, das ohne die Option entsteht. Das ist
+die Gegenprobe und wird von [../../tests/test_widescreen.py](../../tests/test_widescreen.py)
+ohne Spielkopie geprueft.
+
 ## Am echten Recompiler gegengeprueft
 
 Der echte `dolrecomp` (Commit `40637c46`, unter Linux mit dem C-Backend gebaut,

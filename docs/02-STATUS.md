@@ -13,13 +13,13 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 
 | # | Anforderung | Stand | Belegt | Offen |
 |---|---|---|---|---|
-| 1 | Unbegrenzte Framerate | Spike abgeschlossen | Zuordnung der Zeichenbefehle 96–100 %, Bewegung steckt in den Matrizen, synthetisches Zwischenbild gerendert und geprüft, Schnitterkennung kalibriert ([11](11-FRAMERATE-SPIKE.md)) | Umsetzung (WP14); Gegenschnitt in gleicher Szene; Kosten auf echter GPU; Entscheidung des Auftraggebers zu PLAN 5.4 |
-| 2 | Hohe Auflösung, getrennte Ausgabe | weitgehend erledigt | `internal_scale` 1–12 und `output_resolution` getrennt gemessen; randloses Vollbild 1920x1080 und 3440x1440 ([07](07-ANZEIGE.md)) | HiDPI, Mehrmonitor, Launcher-Bedienung, Kantenglättung als Option |
-| 3 | Echtes Widescreen | **Kern abgenommen** | 25/25 Patchstellen im RAM; in das DOL eingebacken, kein SMC-Rückfall; senkrechter Maßstab bitgleich, waagerechter mal 0,757, Sichtverhältnis exakt 16/9, HUD am Bildrand verankert und unverzerrt ([03](03-WIDESCREEN.md), [09](09-DOL-BEFUNDE.md), [10](10-KOPFLOSER-PRUEFSTAND.md), [15](15-WIDESCREEN-ABNAHME.md)) | Filme werden gestreckt (Projektion unverändert, [15](15-WIDESCREEN-ABNAHME.md)); Culling, Effekte und weitere HUD-Elemente; 21:9 und 32:9; ob der Code nativ oder im JIT läuft, ist offen ([13](13-STATISCHER-KERN.md)) |
+| 1 | Unbegrenzte Framerate | Spike abgeschlossen, **Umsetzungsplan steht** | Zuordnung der Zeichenbefehle 96–100 %, Bewegung steckt in den Matrizen, synthetisches Zwischenbild gerendert und geprüft, Schnitterkennung kalibriert ([11](11-FRAMERATE-SPIKE.md)) | Umsetzung (WP14); Gegenschnitt in gleicher Szene; Kosten auf echter GPU; Entscheidung des Auftraggebers zu PLAN 5.4 |
+| 2 | Hohe Auflösung, getrennte Ausgabe, **Skalierer** | weitgehend erledigt | `internal_scale` 1–12 und `output_resolution` getrennt gemessen; randloses Vollbild 1920x1080 und 3440x1440 ([07](07-ANZEIGE.md)); interner Faktor 6 rendert 3840x2688 = 10,3 MPixel, also mehr als 4K in beiden Richtungen; neun Skalierer-Kerne als Namen bedienbar, zwei davon erstmals erreichbar ([18](18-SKALIERER.md)) | Bildwirkung der Kerne am echten Fenster; 3840x2160 als Ausgabegröße nie gefahren; Schärfungsstufe fehlt; HiDPI, Mehrmonitor, Launcher-Bedienung |
+| 3 | Echtes Widescreen, **Ultrawide** | **Kern abgenommen, 21:9 und 32:9 an der Projektion belegt** | 25/25 Patchstellen im RAM; in das DOL eingebacken, kein SMC-Rückfall; senkrechter Maßstab bitgleich, waagerechter mal 0,757, Sichtverhältnis exakt 16/9, HUD am Bildrand verankert und unverzerrt ([03](03-WIDESCREEN.md), [09](09-DOL-BEFUNDE.md), [10](10-KOPFLOSER-PRUEFSTAND.md), [15](15-WIDESCREEN-ABNAHME.md)) | Filme werden gestreckt (Projektion unverändert, [15](15-WIDESCREEN-ABNAHME.md)); Culling, Effekte und weitere HUD-Elemente; 21:9 und 32:9; ob der Code nativ oder im JIT läuft, ist offen ([13](13-STATISCHER-KERN.md)) |
 | 4 | HUD-Anker, Menüs, Sequenzen | nicht begonnen | nur mittelbar über die 2D-Konstanten des Gecko-Codes | alles; Adressbasis steht jetzt zur Verfügung (WP7) |
 | 5 | Windows-Anwendung | halb | Win32-Fenster, randloses Vollbild, Alt+Enter, DPI; Launcher gebaut; RVZ-Import 179/179 byteidentisch ([08](08-WINDOWS-ROM-CONTROLLER.md)) | Launcher nie visuell bedient; kein Modulbau im Launcher; kein Paket |
 | 7 | Analoge Schultertaste, Belegung | Produktseite offen | Halb- und Voll-R unterschieden (0 gegen 542,793 Einheiten) ([05](05-FIFO-UND-FLUDD.md)) | reale Controller, Belegungsoberfläche, Totzonen, Tastatur/Maus, Hotplug |
-| 8 | Originalgetreu, Speichern/Laden | Kern trägt | erster Shine, Save/Load, Neustart mit 1 Shine ([06](06-ERSTER-SHINE.md)); **Ton gemessen**: keine Zeitbasisabweichung, 108,8 s abtastwertgleich zum Referenzkern, Tempo innerhalb 0,3 % zur Filmrate auf der Disc ([12](12-TON.md)) | Hörprobe; echter Ausgabeweg (cubeb/WASAPI); Spielverlauf jenseits des Anfangs |
+| 8 | Originalgetreu, Speichern/Laden | Kern trägt, jetzt nativ | erster Shine, Save/Load, Neustart mit 1 Shine ([06](06-ERSTER-SHINE.md)); **Ton gemessen**: keine Zeitbasisabweichung, 108,8 s abtastwertgleich zum Referenzkern, Tempo innerhalb 0,3 % zur Filmrate auf der Disc ([12](12-TON.md)) | Hörprobe; echter Ausgabeweg (cubeb/WASAPI); Spielverlauf jenseits des Anfangs |
 | 9 | Import eigener Kopie | Importteil erledigt | Python-Importer und Launcher-Import byteidentisch; RVZ-Leser an der echten Kopie belegt ([09](09-DOL-BEFUNDE.md)) | automatischer Modulbau nach der Auswahl, Fortschritt, Fehlermeldungen |
 
 ## Arbeitspakete
@@ -28,34 +28,60 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 |---|---|---|---|
 | WP0 | Absicherung | teilweise | CI mit Tests und Patch-Prüfung (`checks.yml`, `scripts/check_patches.py`); Eingabefolgen als Fixtures unter `tools/acceptance/fixtures/`; dieses Dokument als Matrix. Offen: restliche Diagnoseskripte aus `build/` des Auftraggebers |
 | WP1 | Ton | **gemessen** | [12-TON.md](12-TON.md); offen: Hörprobe, echter Ausgabeweg, DSP-LLE |
-| WP2 | Toolchain-Paket, Modulbau im Launcher | nicht begonnen, **blockiert** | Vorfrage aus [13](13-STATISCHER-KERN.md) |
+| WP2 | Toolchain-Paket, Modulbau im Launcher | nicht begonnen, **nicht mehr blockiert** | die Vorfrage aus [13](13-STATISCHER-KERN.md) ist mit [16](16-RUECKWEG.md) beantwortet |
 | WP3 | Controller | nicht begonnen | — |
 | WP4 | Launcher, Windows-Anwendung | teilweise | [07](07-ANZEIGE.md), [08](08-WINDOWS-ROM-CONTROLLER.md) |
 | WP5 | Stabilität | teilweise | Stapeltiefe über 30.000 Frames gemessen ([11](11-FRAMERATE-SPIKE.md)); Dauerlauf offen |
-| WP6 | Abnahmelauf | **Grundgeruest steht** | `tools/acceptance` mit zwei Szenarien; `boot` (10/10) und `spielstart` (9/9) am echten Spiel bestanden, 13 Tests ohne Spielkopie ([README](../tools/acceptance/README.md)) |
+| WP6 | Abnahmelauf | **Grundgeruest steht** | `tools/acceptance` mit vier Szenarien; `boot` (10/10), `spielstart` (11/11), `nativ` (8/8) und `widescreen` (5/5) am echten Spiel bestanden, 24 Tests ohne Spielkopie ([README](../tools/acceptance/README.md)) |
 | WP7 | Adressbasis | **erledigt** | `tools/symbols`, 12.573/12.573 Bezeichner gegengeprüft ([09](09-DOL-BEFUNDE.md)) |
 | WP8 | 16:9 im Rekompilat | **Schritte 1–4 belegt** | `tools/widescreen`, gebackenes DOL ohne SMC-Rückfall, Bildabnahme an Projektion und Bild ([15](15-WIDESCREEN-ABNAHME.md)); offen: Culling, Effekte, Filme |
-| WP9 | Ultrawide | nicht begonnen | — |
+| WP9 | Ultrawide | **Projektion belegt** | `tools/widescreen bake --aspect`; 64:27 misst 2,3704 und 32:9 misst 3,5556 bei bitgleichem senkrechtem Maszstab ([19](19-ULTRAWIDE.md)). Offen: Bild, HUD, Culling |
 | WP10 | HUD, Menüs, Sequenzen | nicht begonnen | — |
 | WP11 | Filme | Befund liegt vor | die Filmprojektion ist vom Widescreen-Code unberührt, bei 16:9 also gestreckt ([15](15-WIDESCREEN-ABNAHME.md)) |
 | WP12 | Feinschliff | nicht begonnen | — |
+| WP17 | Rückweg in den statischen Kern | **belegt** | [16](16-RUECKWEG.md), [17](17-LOCKSTEP.md); offen: Urteil des Lockstep, Voreinstellung, Geschwindigkeit |
+| WP18 | Grafikskalierer | **Verdrahtung belegt** | [18](18-SKALIERER.md); offen: Bildwirkung am echten Fenster, Schärfung, Launcher |
 | WP13 | Framerate-Spike | **abgeschlossen** | [11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md) |
-| WP14 | Framerate-Umsetzung | wartet auf Entscheidung | PLAN 5.4 |
+| WP14 | Framerate-Umsetzung | **Plan steht, nichts gebaut** | Entscheidung mit dem Ziel des Auftraggebers gefallen; sechs Schritte mit Fundstellen in [20](20-VARIABLE-BILDRATE.md) |
 | WP15 | 60-FPS-Modus (optional) | zurückgestellt | Entscheidung 6 im Plan |
 | WP16 | Abschluss | nicht begonnen | — |
 
-## Die offene Grundsatzfrage
+## Die Grundsatzfrage ist beantwortet
 
-[13-STATISCHER-KERN.md](13-STATISCHER-KERN.md): In 37 gemessenen Läufen führt
-das rekompilierte Modul höchstens 0,18 % der Gasttakte aus. Den Rest übernimmt
-Dolphins JIT64, der im statischen Kern immer mitläuft. Ursache gemessen: Die
-Ausnahmevektoren des Betriebssystems stehen in keinem DOL, das Spiel springt
-beim ersten Systemaufruf dorthin, und der JIT gibt die Kontrolle praktisch
-nicht zurück. Das berührt die Bedeutung von „nativer Port" unmittelbar und
-gehört vor WP2 geklärt. Die Frage ist in
-[14-FRAGE-AN-MODERNGEKKO.md](14-FRAGE-AN-MODERNGEKKO.md) ausformuliert und
-wartet auf die Entscheidung des Auftraggebers, ob und wie sie abgeschickt
-wird.
+[13-STATISCHER-KERN.md](13-STATISCHER-KERN.md) hatte gemessen, dass das
+rekompilierte Modul höchstens 0,18 % der Gasttakte ausführt, und die Frage vor
+WP2 gestellt. [16-RUECKWEG.md](16-RUECKWEG.md) beantwortet sie: Der Rückweg
+fehlte schlicht — der Ersatz-JIT betrat seinen Dispatcher und kehrte nie
+zurück. Mit `patches/recompcore-rueckweg.patch` fällt sein Anteil an den
+Gasttakten von **99,99 % auf 0,015 %**, und beide Abnahmeszenarien bestehen
+weiter. Ein nativer Port ist mit diesem Unterbau möglich.
+
+Zwei Punkte bleiben offen und sind die nächsten Schritte:
+
+1. **Richtigkeit.** Der Lockstep-Verifizierer ist freigeschaltet, und seine
+   Meldungen sind aufgeklärt ([17](17-LOCKSTEP.md)): 112 von 116 kamen aus
+   seiner eigenen Halteregel, die bei Schleifen nach der ersten Runde anhielt.
+   Nach zwei Korrekturen am Verifizierer selbst — der Halteregel und einer
+   Spätprüfung — bleiben über 30 Bilder **0 von 3.410** und über die ganze
+   Eingabefolge **19 von 16.790** (0,11 %). Die 19 sind nicht aufgeklärt und
+   nicht alle vom selben Muster. Der Rückweg ist seit dem 2026-09-16 trotzdem
+   **Voreinstellung** (`STATICRECOMP_NO_YIELD=1` schaltet ihn aus): Ohne ihn
+   wäre das Erzeugnis Emulation und kein Port, und jede Messung, die den
+   Schalter vergisst, misst wieder das Falsche.
+2. **Geschwindigkeit.** Nativ läuft das Spiel noch langsamer als mit dem
+   Ersatz-JIT, hält aber in dieser Umgebung erstmals die 30 Hz der Simulation
+   (**34,8 Bilder je Sekunde ungedrosselt**, vorher 25,5). Drei gemessene
+   Verbesserungen: 52 % (`moderngekko-host-call-active.patch`), 9 %
+   (`recompcore-leerlauf-zwischenspeicher.patch`) und 37 %
+   (`dolrecomp-dcbf-bleibt-im-modul.patch`: zwei Drittel aller Dispatches
+   waren ein einziges `dcbf`, nach dem der Erzeuger grundlos zurückkehrte).
+   Die Vermutung, die Abrechnung je Burst zu bündeln, ist gemessen und
+   **widerlegt** ([21](21-KOSTEN-DES-KERNS.md)). Der nächste Posten liegt im
+   `dcbf`-Haken selbst, nicht mehr im Erzeuger.
+
+Die Frage an ModernGekko ([14](14-FRAGE-AN-MODERNGEKKO.md)) bleibt sinnvoll,
+hat aber einen anderen Inhalt: nicht mehr „ist das der vorgesehene Zustand",
+sondern „hier ist ein Patch — ist das der beabsichtigte Weg?".
 
 ## Belegprotokolle
 
@@ -75,6 +101,12 @@ wird.
 | [13](13-STATISCHER-KERN.md) | wie viel wirklich aus dem Rekompilat läuft |
 | [14](14-FRAGE-AN-MODERNGEKKO.md) | die daraus folgende Frage an ModernGekko, vorbereitet |
 | [15](15-WIDESCREEN-ABNAHME.md) | Widescreen an Projektion und Bild abgenommen |
+| [16](16-RUECKWEG.md) | der Rückweg in den statischen Kern: gebaut, gemessen, abgenommen |
+| [17](17-LOCKSTEP.md) | der Lockstep-Verifizierer: freigeschaltet, erstmals gelaufen |
+| [18](18-SKALIERER.md) | Ausgabe-Skalierer und hohe Auflösung |
+| [19](19-ULTRAWIDE.md) | Ultrawide: 21:9 und 32:9 an der Projektion abgenommen |
+| [20](20-VARIABLE-BILDRATE.md) | variable Bildrate: der Weg in die Laufzeit, sechs Schritte |
+| [21](21-KOSTEN-DES-KERNS.md) | warum der native Kern langsam ist: 173,5 Wirtszyklen je Dispatch |
 
 Die frühere Chronik dieses Dokuments ist in die Matrizen oben aufgegangen. Was
 darunter folgt, sind die Messwerte der Windows-Sitzungen; sie bleiben als

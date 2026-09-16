@@ -1,0 +1,113 @@
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompLockstep.h
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompLockstep.h
+@@ -149,6 +149,10 @@
+   u64 m_ls_filtered = 0;
+   bool m_ls_nodedup = false;
+   int m_ls_step_cap = 20000;
++  // Traf die Nachbildung den Zustand des Moduls erst nach weiteren Runden?
++  // Dann liegt es am Haltepunkt und nicht an der Rechnung.
++  u64 m_ls_late_match = 0;
++  u64 m_ls_late_rounds = 0;   // Summe der zusaetzlich noetigen Runden
+   u64 m_ls_cap_hits = 0;
+   u64 m_ls_checks = 0;          // distinct blocks differentially checked
+   u64 m_ls_reports = 0;         // divergences reported
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompLockstep.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompLockstep.cpp
+@@ -36,12 +36,13 @@
+     std::fprintf(stderr,
+                  "[lockstep] summary: checks=%llu reports=%llu skipped_fallback=%llu "
+                  "skipped_zero=%llu cap_hits=%llu filtered=%llu undercharges=%llu "
+-                 "max_deficit=%lld distinct_pcs=%zu\n",
++                 "max_deficit=%lld distinct_pcs=%zu late=%llu late_rounds=%llu\n",
+                  (unsigned long long)m_ls_checks, (unsigned long long)m_ls_reports,
+                  (unsigned long long)m_ls_skipped_fallback, (unsigned long long)m_ls_skipped_zero,
+                  (unsigned long long)m_ls_cap_hits, (unsigned long long)m_ls_filtered,
+                  (unsigned long long)m_ls_undercharges, (long long)m_ls_max_undercharge,
+-                 m_ls_checked.size());
++                 m_ls_checked.size(), (unsigned long long)m_ls_late_match,
++                 (unsigned long long)m_ls_late_rounds);
+     if (m_set_mem_journal)
+       m_set_mem_journal(nullptr, nullptr);
+   }
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompLockstep_Check.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompLockstep_Check.cpp
+@@ -163,6 +163,43 @@
+   int steps = 0;
+   s64 interp_cycles = 0;
+   const bool end_is_loop_header = LsIsLoopHeader(ram, ram_size, end_pc);
++
++  // Stimmt der Zustand der Nachbildung mit dem des Moduls ueberein?
++  //
++  // Warum das gebraucht wird: Die Halteregel "Endadresse erreicht und Takte
++  // verbraucht" trifft bei Schleifen nicht immer die richtige Runde, weil das
++  // Modul je Runde etwas weniger verbucht, als der Interpreter zaehlt
++  // (gemessen: 26 gegen 29 bei 0x802FE0E4). Wenn die Nachbildung nach ein paar
++  // weiteren Runden EXAKT uebereinstimmt, liegt der Unterschied am Haltepunkt
++  // und nicht an der Rechnung. Genau das wird hier gepruft, statt es zu
++  // vermuten. MMIO bleibt aussen vor: ein zweites Lesen eines Statusregisters
++  // liefert ohnehin nicht denselben Wert.
++  const auto zustand_gleich = [&]() {
++    for (int r = 0; r < 32; ++r)
++    {
++      if (m_core.m_guest.gpr[r] != ppc.gpr[r])
++        return false;
++      u64 n, i;
++      std::memcpy(&n, &m_core.m_guest.fpr[r], sizeof(u64));
++      std::memcpy(&i, &ppc.ps[r].ps0, sizeof(u64));
++      if (n != i)
++        return false;
++      std::memcpy(&n, &m_core.m_guest.ps1[r], sizeof(u64));
++      std::memcpy(&i, &ppc.ps[r].ps1, sizeof(u64));
++      if (n != i)
++        return false;
++    }
++    if (m_core.m_guest.lr != ppc.spr[SPR_LR] || m_core.m_guest.ctr != ppc.spr[SPR_CTR] ||
++        m_core.m_guest.cr != ppc.cr.Get() || m_core.m_guest.xer != ppc.GetXER().Hex ||
++        m_core.m_guest.fpscr != ppc.fpscr.Hex || m_core.m_guest.msr != ppc.msr.Hex)
++      return false;
++    for (const auto& [off, post] : m_journal.ram_post)
++      if (off < ram_size && ram[off] != post)
++        return false;
++    return true;
++  };
++  constexpr int LS_LATE_ROUNDS = 8;   // hoechstens so viele weitere Runden
++  int spaete_runden = 0;
+   while (steps < m_ls_step_cap)
+   {
+     const u32 before = ppc.pc;
+@@ -175,8 +212,33 @@
+                    steps, before, ppc.gpr[3], ppc.gpr[4], ppc.gpr[5], ppc.msr.Hex,
+                    ppc.GetXER().Hex, ppc.cr.Get(), ppc.spr[SPR_LR], ppc.spr[SPR_CTR]);
+     }
+-    if (ppc.pc == end_pc)
+-      break;
++    // Halten, wenn die Nachbildung die Endadresse erreicht hat -- aber erst,
++    // wenn sie auch so viele Takte verbraucht hat wie das Modul verbucht hat.
++    //
++    // Ohne die zweite Bedingung wird jede Schleife falsch gemeldet, deren Ende
++    // zugleich ihr Kopf ist: Das Modul laeuft bis zur Kachelgrenze, die
++    // Nachbildung haelt nach der ersten Runde, und der Vergleich meldet die
++    // Differenz aller uebrigen Runden als Abweichung. Am Beispiel
++    // 0x80003194 nachgewiesen: Modul 26 Runden (charge=260), Nachbildung 1
++    // Runde; gemeldet wurden r3 (26 mal 0x20 auseinander) und r0 (25
++    // auseinander). Das ist kein Recompilationsfehler, sondern die
++    // Halteregel. Siehe docs/17-LOCKSTEP.md.
++    if (ppc.pc == end_pc && interp_cycles >= native_charge)
++    {
++      if (zustand_gleich())
++      {
++        if (spaete_runden > 0)
++        {
++          ++m_ls_late_match;
++          m_ls_late_rounds += static_cast<u64>(spaete_runden);
++        }
++        break;
++      }
++      if (spaete_runden >= LS_LATE_ROUNDS)
++        break;
++      ++spaete_runden;
++      // weiterlaufen bis zur naechsten Ankunft an der Endadresse
++    }
+     if (ppc.Exceptions != 0)
+       break;
+   }

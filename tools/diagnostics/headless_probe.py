@@ -68,6 +68,15 @@ def main() -> int:
                    help="Emulationsgeschwindigkeit aufheben ([Core] EmulationSpeed=0). "
                         "Nur so sagt die Wanduhr etwas ueber die Leistung eines Kerns; "
                         "gedrosselt laufen beide Kerne am selben Anschlag.")
+    p.add_argument("--video-setting", action="append", default=[], metavar="SCHLUESSEL=WERT",
+                   help="zusaetzliche Zeile im Abschnitt [Video] der config.ini "
+                        "des Frontends, mehrfach moeglich (etwa scaler=nearest). "
+                        "Anders als --core-setting geht das an ModernGekkos "
+                        "eigene Einstellungen, nicht an Dolphins Dolphin.ini.")
+    p.add_argument("--core-setting", action="append", default=[], metavar="SCHLUESSEL=WERT",
+                   help="zusaetzliche Zeile im Abschnitt [Core] der Dolphin.ini, "
+                        "mehrfach moeglich (etwa LargeEntryPointsMap=False). "
+                        "Landet im Manifest, damit der Lauf nachvollziehbar bleibt.")
     p.add_argument("--jit", action="store_true",
                    help="ohne statisches Modul mit JIT64 laufen (Vergleichslauf); "
                         "--module wird dann nicht uebergeben")
@@ -83,16 +92,24 @@ def main() -> int:
     (user / "Config").mkdir(parents=True)
     # Das Frontend nimmt in config.ini nur Vulkan oder OpenGL an (Dok. 04);
     # kopflos setzt die Laufzeit den Null-Backend selbst (dolphin_runtime.cpp).
+    for setting in args.video_setting:
+        if "=" not in setting:
+            p.error(f"--video-setting braucht SCHLUESSEL=WERT, nicht {setting!r}")
     (user / "config.ini").write_text(
-        "[Video]\ninternal_scale=1\nbackend=Vulkan\nfullscreen=false\n")
+        "[Video]\ninternal_scale=1\nbackend=Vulkan\nfullscreen=false\n"
+        + "".join(f"{entry}\n" for entry in args.video_setting))
     # Dateilog, damit Codehandler, Boot und Core nachvollziehbar bleiben.
     (user / "Config/Logger.ini").write_text(
         "[Options]\nWriteToFile=True\nVerbosity=3\n"
         "[Logs]\nActionReplay=True\nBOOT=True\nCORE=True\nCOMMON=True\n"
         "Audio=True\nAudioInterface=True\nDSPHLE=True\n")
+    for setting in args.core_setting:
+        if "=" not in setting:
+            p.error(f"--core-setting braucht SCHLUESSEL=WERT, nicht {setting!r}")
     (user / "Config/Dolphin.ini").write_text(
         f"[Core]\nEnableCheats={'True' if args.cheats_ini else 'False'}\n"
         + ("EmulationSpeed=0\n" if args.uncapped else "")
+        + "".join(f"{s}\n" for s in args.core_setting)
         + ("[DSP]\nDumpAudio=True\n" if args.audio_dump else ""))
     # Bilder gibt es aus diesem Lauf nicht: Der Software-Renderer braucht eine
     # GL-Praesentation, die ModernGekko unter Linux abschaltet (ENABLE_EGL OFF),
@@ -119,6 +136,8 @@ def main() -> int:
     env = dict(os.environ, MODERNGEKKO_STATICRECOMP="1" if static else "0")
     manifest = {"command": cmd, "reads": {}, "cpu": "static" if static else "jit64",
                 "uncapped": bool(args.uncapped),
+                "core_settings": list(args.core_setting),
+                "video_settings": list(args.video_setting),
                 "module_sha256": hashlib.sha256(args.module.read_bytes()).hexdigest()
                 if static else None}
 

@@ -1,0 +1,346 @@
+--- a/Source/Core/Core/PowerPC/Jit64/Jit.cpp
++++ b/Source/Core/Core/PowerPC/Jit64/Jit.cpp
+@@ -463,6 +463,12 @@
+   RET();
+ }
+ 
++// Rueckweg in den statischen Kern; definiert in StaticRecomp/StaticRecompCore.cpp.
++extern u32 g_sr_yield_low;
++extern u32 g_sr_yield_span;
++extern u32 g_sr_yield_block_pc;
++extern u64 g_sr_yields;
++
+ void Jit64::WriteRfiExitDestInRSCRATCH()
+ {
+   MOV(32, PPCSTATE(pc), R(RSCRATCH));
+@@ -472,6 +478,38 @@
+   ABI_CallFunctionP(PowerPC::CheckExceptionsFromJIT, &m_system.GetPowerPC());
+   ABI_PopRegistersAndAdjustStack({}, 0);
+   EmitUpdateMembase();
++  // Rueckweg in den statischen Kern. Das Ziel eines Ausnahme-Ruecksprungs
++  // liegt fast immer wieder im Spielcode -- gemessen 99,92 Prozent der rfi.
++  // Liegt es im Modulbereich, verlassen wir den Dispatcher ueber
++  // dispatcher_exit; StaticRecompCore::Run prueft dann mit DispatchableAt und
++  // beginnt einen nativen Burst. Lehnt das Tor ab, vermerkt es die Adresse in
++  // g_sr_yield_block_pc, und der naechste Ruecksprung dorthin bleibt im JIT --
++  // eine verlorene Runde, keine Schleife.
++  //
++  // Der Test sitzt bewusst nicht im gemeinsamen Dispatcher: Sobald der erste
++  // Ruecksprung greift, fuehrt das Modul rfi selbst aus und behaelt die
++  // Kontrolle; die Dispatcher-Durchlaeufe fielen in der Messung von 35,8
++  // Millionen auf 29.882. Ein Test im heissen Pfad waere Aufwand ohne Ertrag.
++  {
++    MOV(32, R(RSCRATCH2), PPCSTATE(pc));
++    MOV(64, R(RSCRATCH), ImmPtr(&g_sr_yield_low));
++    SUB(32, R(RSCRATCH2), MatR(RSCRATCH));
++    MOV(64, R(RSCRATCH), ImmPtr(&g_sr_yield_span));
++    CMP(32, R(RSCRATCH2), MatR(RSCRATCH));
++    FixupBranch sr_outside = J_CC(CC_AE);
++    MOV(32, R(RSCRATCH2), PPCSTATE(pc));
++    MOV(64, R(RSCRATCH), ImmPtr(&g_sr_yield_block_pc));
++    CMP(32, R(RSCRATCH2), MatR(RSCRATCH));
++    FixupBranch sr_blocked = J_CC(CC_E);
++    SUB(32, PPCSTATE(downcount), Imm32(js.downcountAmount));
++    MOV(32, R(RSCRATCH), PPCSTATE(pc));
++    MOV(32, PPCSTATE(npc), R(RSCRATCH));
++    MOV(64, R(RSCRATCH), ImmPtr(&g_sr_yields));
++    ADD(64, MatR(RSCRATCH), Imm32(1));
++    JMP(asm_routines.dispatcher_exit);
++    SetJumpTarget(sr_outside);
++    SetJumpTarget(sr_blocked);
++  }
+   SUB(32, PPCSTATE(downcount), Imm32(js.downcountAmount));
+   JMP(asm_routines.dispatcher);
+ }
+@@ -494,6 +532,38 @@
+   ABI_CallFunctionP(PowerPC::CheckExceptionsFromJIT, &m_system.GetPowerPC());
+   ABI_PopRegistersAndAdjustStack({}, 0);
+   EmitUpdateMembase();
++  // Rueckweg in den statischen Kern. Das Ziel eines Ausnahme-Ruecksprungs
++  // liegt fast immer wieder im Spielcode -- gemessen 99,92 Prozent der rfi.
++  // Liegt es im Modulbereich, verlassen wir den Dispatcher ueber
++  // dispatcher_exit; StaticRecompCore::Run prueft dann mit DispatchableAt und
++  // beginnt einen nativen Burst. Lehnt das Tor ab, vermerkt es die Adresse in
++  // g_sr_yield_block_pc, und der naechste Ruecksprung dorthin bleibt im JIT --
++  // eine verlorene Runde, keine Schleife.
++  //
++  // Der Test sitzt bewusst nicht im gemeinsamen Dispatcher: Sobald der erste
++  // Ruecksprung greift, fuehrt das Modul rfi selbst aus und behaelt die
++  // Kontrolle; die Dispatcher-Durchlaeufe fielen in der Messung von 35,8
++  // Millionen auf 29.882. Ein Test im heissen Pfad waere Aufwand ohne Ertrag.
++  {
++    MOV(32, R(RSCRATCH2), PPCSTATE(pc));
++    MOV(64, R(RSCRATCH), ImmPtr(&g_sr_yield_low));
++    SUB(32, R(RSCRATCH2), MatR(RSCRATCH));
++    MOV(64, R(RSCRATCH), ImmPtr(&g_sr_yield_span));
++    CMP(32, R(RSCRATCH2), MatR(RSCRATCH));
++    FixupBranch sr_outside = J_CC(CC_AE);
++    MOV(32, R(RSCRATCH2), PPCSTATE(pc));
++    MOV(64, R(RSCRATCH), ImmPtr(&g_sr_yield_block_pc));
++    CMP(32, R(RSCRATCH2), MatR(RSCRATCH));
++    FixupBranch sr_blocked = J_CC(CC_E);
++    SUB(32, PPCSTATE(downcount), Imm32(js.downcountAmount));
++    MOV(32, R(RSCRATCH), PPCSTATE(pc));
++    MOV(32, PPCSTATE(npc), R(RSCRATCH));
++    MOV(64, R(RSCRATCH), ImmPtr(&g_sr_yields));
++    ADD(64, MatR(RSCRATCH), Imm32(1));
++    JMP(asm_routines.dispatcher_exit);
++    SetJumpTarget(sr_outside);
++    SetJumpTarget(sr_blocked);
++  }
+   SUB(32, PPCSTATE(downcount), Imm32(js.downcountAmount));
+   JMP(asm_routines.dispatcher);
+ }
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
+@@ -7,15 +7,20 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
++#include <map>
++#include <vector>
+ #include <sstream>
+ 
+ #include "Common/Config/Config.h"
+ #include "Common/DynamicLibrary.h"
+ #include "Common/FileUtil.h"
++#include <fmt/format.h>
++
+ #include "Common/Logging/Log.h"
+ #include "Core/Config/ConfigManager.h"
+ #include "Core/Config/MainSettings.h"
+ #include "Core/Config/StaticRecompSettings.h"
++#include "Core/CoreTiming.h"
+ #include "Core/HW/Memmap.h"
+ #include "Core/PowerPC/StaticRecomp/StaticRecompLockstep.h"
+ #include "Core/System.h"
+@@ -225,18 +230,50 @@
+   }
+ }
+ 
++// Rueckweg in den statischen Kern (docs/16-RUECKWEG.md).
++//
++// Der Ersatz-JIT betritt seinen Dispatcher und kehrt praktisch nie zurueck:
++// Der Ausstieg haengt an "downcount <= 0 UND CPU-Zustand != Running"
++// (JitAsm.cpp). Damit blieb das Rekompilat nach dem ersten Systemaufruf
++// arbeitslos. Diese drei Werte sind der Hinweis, den der erzeugte Code an den
++// Ausnahme-Ausgaengen mit einem Bereichsvergleich prueft; entschieden wird
++// weiterhin allein am Tor in StaticRecompCore_Run.cpp.
++//
++// Bewusst kein Praedikat mit Kachelzustand: Verifiziert wird eine Kachel nur
++// in DispatchableAt, und das laeuft erst nach dem Hinweis. Ein Hinweis, der
++// Verifikation voraussetzt, koennte sich nie fuellen.
++u32 g_sr_yield_low = 0;
++u32 g_sr_yield_span = 0;       // 0 heisst: abgeschaltet
++u32 g_sr_yield_block_pc = 0;   // zuletzt vom Tor abgelehnte Adresse
++u64 g_sr_yields = 0;
++u64 g_sr_yield_rejects = 0;
++u64 g_sr_yield_noprogress = 0;
++// Gasttakte, die im Ersatz-JIT vergehen -- der Gegenwert zu cycles.
++u64 g_sr_jit_ticks = 0;
++// Takte, die CoreTiming ueberspringt (Leerlauf) -- niemand fuehrt sie aus.
++u64 g_sr_advance_ticks = 0;
++
+ void StaticRecompCore::Shutdown()
+ {
+   g_static_recomp_core = nullptr;
+   m_system.GetMemory().SetRelocationAliases({});
+   std::fprintf(stderr,
++               "[staticrecomp] yield: yields=%llu rejects=%llu noprogress=%llu span=%u jit_ticks=%llu "
++               "advance_ticks=%llu\n",
++               (unsigned long long)g_sr_yields, (unsigned long long)g_sr_yield_rejects,
++               (unsigned long long)g_sr_yield_noprogress, g_sr_yield_span,
++               (unsigned long long)g_sr_jit_ticks,
++               (unsigned long long)g_sr_advance_ticks);
++  std::fprintf(stderr,
+                "[staticrecomp] shutdown: native=%llu fallback=%llu native_exc=%llu hook_fb=%llu "
+-               "smc_failed=%u verifications=%llu reverify_events=%llu bursts=%llu cycles=%llu\n",
++               "smc_failed=%u verifications=%llu reverify_events=%llu bursts=%llu cycles=%llu "
++               "ticks=%llu\n",
+                (unsigned long long)m_native_dispatches, (unsigned long long)m_fallback_steps,
+                (unsigned long long)m_native_exceptions,
+                (unsigned long long)m_hook_fallback_instructions, m_failed_chunks,
+                (unsigned long long)m_verifications, (unsigned long long)m_reverify_events,
+-               (unsigned long long)m_bursts, (unsigned long long)m_charged_cycles);
++               (unsigned long long)m_bursts, (unsigned long long)m_charged_cycles,
++               (unsigned long long)m_system.GetCoreTiming().GetTicks());
+   std::vector<std::pair<u32, u64>> dispatch_samples(m_dispatch_samples.begin(),
+                                                     m_dispatch_samples.end());
+   std::sort(dispatch_samples.begin(), dispatch_samples.end(),
+@@ -331,6 +368,37 @@
+ 
+   m_module = desc;
+   m_module_active = (desc != nullptr);
++  m_hot_chunk_lo = 1;
++  m_hot_chunk_hi = 0;
++  m_hot_chunk_index = -1;
++  m_hot_chunk_enabled = std::getenv("STATICRECOMP_NO_CHUNKCACHE") == nullptr;
++
++
++  // Der Modulbereich als Bereichsvergleich fuer den Rueckweg.
++  //
++  // Voreinstellung ist AN: Ohne den Rueckweg fuehrt das Modul 0,0015 Prozent
++  // der Gasttakte aus, der Rest laeuft im Ersatz-JIT -- das waere Emulation
++  // und kein Port. Der Lockstep-Verifizierer meldet mit Rueckweg ueber 30
++  // Bilder keine einzige Abweichung (3.410 gepruefte Bloecke), ueber die ganze
++  // Eingabefolge 19 von 16.790; die sind offen und in docs/17-LOCKSTEP.md
++  // benannt. STATICRECOMP_NO_YIELD=1 schaltet ihn aus, fuer Vergleichslaeufe
++  // und falls sich eine der 19 als echter Fehler herausstellt.
++  {
++    u32 low = 0xFFFFFFFFu, high = 0;
++    for (u32 i = 0; i < desc->num_code_ranges; ++i)
++    {
++      low = std::min(low, desc->code_ranges[i].start);
++      high = std::max(high, desc->code_ranges[i].end);
++    }
++    const bool wanted = std::getenv("STATICRECOMP_NO_YIELD") == nullptr;
++    const bool usable = wanted && high > low && desc->num_rel_modules == 0;
++    g_sr_yield_low = usable ? low : 0;
++    g_sr_yield_span = usable ? (high - low) : 0;
++    g_sr_yield_block_pc = 0;
++    if (wanted && !usable)
++      std::fprintf(stderr, "[staticrecomp] yield: nicht anwendbar (REL-Module oder leerer "
++                           "Codebereich); Rueckweg bleibt aus\n");
++  }
+   m_chunk_state.assign(desc->num_chunk_ranges, CHUNK_UNVERIFIED);
+   m_chunk_retry_after.assign(desc->num_chunk_ranges, 0);
+   m_smc_probe_clock = 0;
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
+@@ -21,6 +21,14 @@
+     EXCEPTION_EXTERNAL_INT | EXCEPTION_DECREMENTER | EXCEPTION_PERFORMANCE_MONITOR);
+ }
+ 
++// Rueckweg in den statischen Kern; definiert in StaticRecompCore.cpp.
++extern u32 g_sr_yield_span;
++extern u32 g_sr_yield_block_pc;
++extern u64 g_sr_yield_rejects;
++extern u64 g_sr_yield_noprogress;
++extern u64 g_sr_jit_ticks;
++extern u64 g_sr_advance_ticks;
++
+ void StaticRecompCore::Run()
+ {
+   auto& core_timing = m_system.GetCoreTiming();
+@@ -43,6 +51,11 @@
+     if (!m_module_active || m_chunk_lookup_table.empty())
+       return false;
+ 
++    // Zuerst der Zwischenspeicher: liegt die Adresse in derselben Kachel wie
++    // beim letzten Mal? Dann entfaellt der Zugriff auf die 24-MiB-Tabelle.
++    if (m_hot_chunk_enabled && address >= m_hot_chunk_lo && address < m_hot_chunk_hi)
++      return m_chunk_state[m_hot_chunk_index] == CHUNK_VERIFIED;
++
+     int lookup_index = -1;
+     if (address >= 0x80000000u && address < 0x80000000u + m_lookup_ram_size)
+     {
+@@ -55,7 +68,13 @@
+     if (lookup_index < 0 || lookup_index >= static_cast<int>(m_chunk_lookup_table.size()))
+       return false;
+     const int chunk = m_chunk_lookup_table[lookup_index];
+-    return chunk >= 0 && m_chunk_state[chunk] == CHUNK_VERIFIED;
++    if (chunk < 0)
++      return false;
++    const StaticRecompRange& bereich = m_module->chunk_ranges[chunk];
++    m_hot_chunk_lo = bereich.start;
++    m_hot_chunk_hi = bereich.end;
++    m_hot_chunk_index = chunk;
++    return m_chunk_state[chunk] == CHUNK_VERIFIED;
+   };
+ 
+   const std::string initial_game_id = SConfig::GetInstance().GetGameID();
+@@ -150,7 +169,12 @@
+                                      IsBusyWaitLoop(runtime_dispatch_address);
+           if (configured_idle || detected_idle)
+           {
++            // Leerlaufsprung: CoreTiming springt zum naechsten Ereignis. Diese
++            // Takte fuehrt niemand aus -- weder das Modul noch der JIT. Ohne
++            // sie zu kennen, sieht der native Anteil kleiner aus, als er ist.
++            const u64 idle_before = m_system.GetCoreTiming().GetTicks();
+             m_system.GetCoreTiming().Idle();
++            g_sr_advance_ticks += m_system.GetCoreTiming().GetTicks() - idle_before;
+           }
+ 
+           // ctx->timebase is refreshed at burst start (SyncIn), and here we
+@@ -181,6 +205,16 @@
+       }
+       else
+       {
++        // Das Tor hat diese Adresse abgelehnt. Kam die Kontrolle gerade ueber
++        // den Rueckweg hierher, wuerde der naechste Ruecksprung dorthin
++        // wieder aussteigen. Diese eine Adresse wird deshalb gesperrt; mehr
++        // als eine ist nicht noetig, weil nur die zuletzt abgelehnte den JIT
++        // sofort wieder verlassen laesst.
++        if (g_sr_yield_span != 0 && ppc.pc != g_sr_yield_block_pc)
++        {
++          g_sr_yield_block_pc = ppc.pc;
++          ++g_sr_yield_rejects;
++        }
+         if (m_guest.host_call && IsHostCallAddress(ppc.pc))
+         {
+           SyncIn();
+@@ -215,7 +249,31 @@
+         }
+         else if (m_fallback_jit)
+         {
++          // Notbremse. Ein Hinweis, den das Tor ablehnt, darf hoechstens eine
++          // Runde kosten. Bleibt der Gast trotzdem stehen, wird der Rueckweg
++          // abgeschaltet und der Lauf verhaelt sich wieder wie ohne ihn --
++          // eine langsame Messung mit lesbarer Zaehlerzeile ist allemal besser
++          // als ein stummer Haenger ohne jede Zahl.
++          const u32 pc_before = ppc.pc;
++          const int downcount_before = ppc.downcount;
++          const u64 ticks_before = core_timing.GetTicks();
+           m_fallback_jit->Run();
++          g_sr_jit_ticks += core_timing.GetTicks() - ticks_before;
++          if (g_sr_yield_span != 0 && ppc.pc == pc_before &&
++              ppc.downcount == downcount_before && *state_ptr == CPU::State::Running)
++          {
++            if (++m_yield_stall >= 16)
++            {
++              g_sr_yield_span = 0;
++              ++g_sr_yield_noprogress;
++              std::fprintf(stderr, "[staticrecomp] yield: kein Fortschritt bei pc=%08x, "
++                                   "Rueckweg abgeschaltet\n", pc_before);
++            }
++          }
++          else
++          {
++            m_yield_stall = 0;
++          }
+         }
+         else
+         {
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
+@@ -165,6 +165,21 @@
+   u32 m_host_call_passthrough_pc = 0;
+   bool m_host_call_passthrough = false;
+   bool m_host_calls_active = false;
++
++  // Ein-Eintrag-Zwischenspeicher fuer die Kachelsuche (docs/21).
++  //
++  // Die Suche geht sonst ueber m_chunk_lookup_table: ein int je Gast-
++  // Befehlswort, also 24 MiB, zufaellig angesprungen -- gemessen rund 31
++  // Wirtszyklen. Ein Dispatch deckt aber nur rund neun Befehle ab und bleibt
++  // damit fast immer in derselben Kachel. Gemerkt wird nur der Bereich und
++  // der Index, NICHT der Zustand: Der wird weiterhin aus m_chunk_state
++  // gelesen (221 Eintraege, immer im Cache). Deshalb muss dieser
++  // Zwischenspeicher bei Zustandsaenderungen nicht geleert werden, sondern
++  // nur, wenn sich die Kachelbereiche selbst aendern.
++  u32 m_hot_chunk_lo = 1;   // lo > hi heisst: leer
++  u32 m_hot_chunk_hi = 0;
++  int m_hot_chunk_index = -1;
++  bool m_hot_chunk_enabled = true;   // Messschalter
+   u64 m_host_call_generation = ~u64{0};
+   std::unique_ptr<JitBase> m_fallback_jit;
+ 
+@@ -195,6 +210,8 @@
+   std::vector<u64> m_chunk_retry_after;
+   u64 m_smc_probe_clock = 0;
+   u64 m_rel_mapping_generation = 0;
++  // Runden ohne Gastfortschritt hinter einem Rueckweg-Hinweis (Notbremse).
++  u32 m_yield_stall = 0;
+   u32 m_failed_chunks = 0;    // chunks currently failing verification (real SMC)
+   u64 m_verifications = 0;    // chunk hash checks performed
+   u64 m_reverify_events = 0;  // invalidations that reset a chunk to Unverified

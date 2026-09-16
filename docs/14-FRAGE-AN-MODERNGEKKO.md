@@ -3,6 +3,27 @@
 Stand: 2026-09-15. Vorbereitet, nicht abgeschickt. Die Messungen stehen in
 [13-STATISCHER-KERN.md](13-STATISCHER-KERN.md).
 
+> **Am selben Tag überholt.** Die Fragen 1 bis 3 und 5 sind inzwischen selbst
+> beantwortet, drei davon mit einem Patch:
+>
+> | Frage | Antwort |
+> |---|---|
+> | 1–3, Rückweg | Er fehlte. `patches/recompcore-rueckweg.patch` stellt ihn an den Ausnahme-Ausgängen her; der Anteil des Ersatz-JIT fällt von 99,99 % auf 0,015 % ([16](16-RUECKWEG.md)) |
+> | 5, `ppc_set_mem_write_journal` | Das Versionsskript `module.exports` setzt alles außer `staticrecomp_get_module` auf `local`; ThinLTO entfernt daraufhin die Journal-Aufrufe. Ein Neulink mit ergänztem Skript genügt ([17](17-LOCKSTEP.md)) |
+> | 4, `StaticRecompShouldYieldAt` | weiterhin offen; wir haben sie bewusst **nicht** verwendet, weil sie zusätzlich für Host-Call-Adressen wahr liefert und einen Einmal-Zustand verbraucht — das Prädikat passt nicht zum Tor in `StaticRecompCore_Run.cpp` |
+>
+> Dafür sind zwei neue Fragen entstanden, die wir nicht selbst beantworten
+> können:
+>
+> 6. **Ist der beschriebene Rückweg der beabsichtigte Weg?** Wir setzen den
+>    Test an die Ausgänge von `rfi` und Ausnahme, nicht in den Dispatcher —
+>    weil 99,92 % der Rücksprungziele im Modulbereich liegen und der Dispatcher
+>    danach ohnehin fast nicht mehr durchlaufen wird.
+> 7. **Verbucht das Modul zu wenig Takte?** Auf einem Block mit 29 Befehlen je
+>    Schleifenrunde verbucht es rund 26. Der Lockstep-Verifizierer kann eine
+>    Schleife deshalb nicht exakt anhalten. Sollte die Modul-Schnittstelle die
+>    Zahl ausgeführter Befehle melden, nicht nur die verbuchten Takte?
+
 Diese Frage entscheidet, was der Port ist, und blockiert WP2
 ([PLAN.md](PLAN.md)). Sie geht an das Projekt, dessen Laufzeit wir verwenden,
 nicht an ein Forum: Sie ist eine sachliche Rückfrage zum Entwurf, keine

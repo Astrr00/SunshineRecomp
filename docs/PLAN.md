@@ -41,11 +41,21 @@ stillschweigend unterschiedlich verstanden wird.
 
 | Schicht | Stand | Folge für den Plan |
 |---|---|---|
-| Spiellogik (CPU) | nativ: statisch nach x86-64 rekompiliert (224 C-Dateien, `gGMSE01_recomp.dll`) | Ausnahmen laufen im Interpreter: 139 SMC-Stellen und die vom Gecko-Code veränderten Chunks. WP8 holt die Widescreen-Chunks in den nativen Code, WP5 misst den Rest |
+| Spiellogik (CPU) | nativ: statisch nach x86-64 rekompiliert (224 C-Dateien, `gGMSE01_recomp.dll`) — **aber erst seit dem 15.09. tatsächlich ausgeführt**, siehe unten | Ausnahmen laufen im Interpreter: 139 SMC-Stellen und die vom Gecko-Code veränderten Chunks. WP8 holt die Widescreen-Chunks in den nativen Code, WP5 misst den Rest |
 | Grafik | der GX-Befehlsstrom des Spiels wird von Dolphins VideoCommon auf Vulkan/OpenGL abgebildet | die Flipper-GPU als Laufzeitbibliothek. Ein Renderer auf Quellcodeebene (Aurora) setzt dekompilierten Spielcode voraus, den es für GMSE01 nicht gibt (01-MACHBARKEIT, 1.1 und 1.2). Diese Grenze gilt für jeden Recomp-Port, auch Zelda64Recomp und SunPad |
 | Ton | DSP-HLE und Audiobackend der Laufzeit | native Nachbildung des DSP; Abnahme in WP1 |
 | System (VI, DVD, Speicherkarte, Timer, Eingabe) | Laufzeitbibliothek mit Dolphin-Abstammung | für den Nutzer unsichtbar, solange die Produktform stimmt (0.2) |
 | Fenster und Launcher | `DolphinNoGUI`-Plattform Win32 (gepatcht), ImGui-Launcher | tragen noch Laufzeitnamen: Fensterklasse `DolphinNoGUI` (in `windows_display_probe.py` belegt), Dolphin-INIs im Profil |
+
+> **Berichtigung vom 2026-09-15.** Die Zeile „Spiellogik (CPU): nativ" war zu
+> diesem Zeitpunkt nicht belegt. [13-STATISCHER-KERN.md](13-STATISCHER-KERN.md)
+> hat gemessen, dass das Rekompilat höchstens 0,18 % der Gasttakte ausführte;
+> den Rest übernahm Dolphins JIT64. [16-RUECKWEG.md](16-RUECKWEG.md) behebt das:
+> Der Ersatz-JIT betrat seinen Dispatcher und kehrte nie zurück. Mit dem
+> Rückweg fällt sein Anteil auf 0,015 %. Die Zeile stimmt seitdem — aber nur
+> seit dem 2026-09-16 in der Voreinstellung; `STATICRECOMP_NO_YIELD=1`
+> schaltet ihn aus. Offen bleiben 19 Lockstep-Meldungen über die ganze
+> Eingabefolge ([17-LOCKSTEP.md](17-LOCKSTEP.md)).
 
 Das ist dieselbe Bedeutung von „nativ", die Zelda64Recomp und SunPad
 verwenden: nativer Spielcode plus eine Laufzeitbibliothek für die
@@ -614,6 +624,11 @@ zugeordnet werden, das Zwischenbild plausibel ist und der Schnitt erkannt
 wird. Sonst B bewerten oder dem Auftraggeber die Optionen aus 5.4 vorlegen.
 
 ### 5.4 Was „unbegrenzt" realistisch bedeutet
+
+> **Entschieden am 2026-09-15.** Der Auftraggeber hat als Ziel genannt:
+> „variable Fps ohne die Spiellogik kaputt zu machen". Damit ist der unten
+> beschriebene Umfang vereinbart: Simulation bleibt bei 30 Hz, gerendert wird
+> entkoppelt. WP14 wartet nicht mehr auf eine Entscheidung.
 
 Die Simulation bleibt originalgetreu bei 30 Hz. Gerendert wird mit
 Bildschirmrate oder ohne Begrenzung. Interpoliert wird nur zuordenbare

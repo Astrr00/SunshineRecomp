@@ -121,6 +121,16 @@ function Add-Patches {
             File = 'dolrecomp-msvc-popcount.patch'
             Target = Join-Path $RefRoot 'DolRecomp'
         },
+        # dcbf und dcbst bleiben im Modul. Der C-Erzeuger kehrte nach jeder
+        # Cache-Anweisung unbedingt zum Wirt zurueck; bei Sunshine waren
+        # zwei Drittel aller Dispatches ein einziges dcbf in DCFlushRange.
+        # Gemessen (docs/21): dcbf/dcbst/dcbi invalidieren im Wirt nichts,
+        # nur icbi -- deshalb kehren dcbi (kann in Nutzermodus trappen) und
+        # icbi weiterhin zurueck. Braucht einen vollstaendigen Modulbau.
+        @{
+            File = 'dolrecomp-dcbf-bleibt-im-modul.patch'
+            Target = Join-Path $RefRoot 'DolRecomp'
+        },
         # Zwei Luecken im Branch moderngekko-runtime:
         #
         # 1. StaticRecompCore::GetExceptionCheckTarget ist als override
@@ -150,6 +160,64 @@ function Add-Patches {
         @{
             File = 'moderngekko-display-settings.patch'
             Target = Join-Path $RefRoot 'ModernGekko'
+        }
+        # host_call_active und host_call_generation waren nie verdrahtet, obwohl
+        # ModernGekkos ModManager beide beantwortet. Folge: Der statische Kern
+        # nimmt an, es gebe immer Guest-Abfangstellen, und fragt bei jedem
+        # Dispatch ueber einen indirekten Aufruf nach -- in einem Lauf ueber 180
+        # Bilder 192 Millionen Mal. Siehe docs/16-RUECKWEG.md.
+        @{
+            File = 'moderngekko-host-call-active.patch'
+            Target = Join-Path $RefRoot 'ModernGekko'
+        }
+        # Ausgabe-Skalierer als Produktfunktion. Der Shader
+        # Data/Sys/Shaders/default_pre_post_process.glsl setzt neun Kerne um,
+        # die Aufzaehlung OutputResamplingMode stellte nur sieben bereit:
+        # Nearest Neighbor und Bicubic Hermite waren unerreichbar. Der erste
+        # Patch macht sie erreichbar, der zweite gibt sie als Namen nach aussen
+        # (config.ini scaler=, --scaler). Siehe docs/17-SKALIERER.md.
+        @{
+            File = 'recompcore-scaler-kernels.patch'
+            Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
+        }
+        @{
+            File = 'moderngekko-scaler.patch'
+            Target = Join-Path $RefRoot 'ModernGekko'
+        }
+        # Halteregel des Lockstep-Verifizierers. Er liess die Nachbildung
+        # laufen, bis pc == end_pc -- bei einer Schleife, deren Ende zugleich
+        # ihr Kopf ist, also nach der ersten Runde, waehrend das Modul viele
+        # Runden lief. Die Differenz aller uebrigen Runden wurde als Abweichung
+        # gemeldet. Mit der zusaetzlichen Bedingung, dass auch die verbuchten
+        # Takte erreicht sein muessen, fallen 112 von 116 Meldungen weg.
+        # Siehe docs/17-LOCKSTEP.md.
+        @{
+            File = 'recompcore-lockstep-halteregel.patch'
+            Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
+        }
+        # Rueckweg in den statischen Kern. Der Ersatz-JIT betrat seinen
+        # Dispatcher und kehrte praktisch nie zurueck; das Rekompilat lief
+        # deshalb nach dem ersten Systemaufruf nicht mehr (gemessen: 0,0015 %
+        # der Gasttakte). Der Patch laesst den erzeugten Code an den
+        # Ausnahme-Ausgaengen pruefen, ob das Sprungziel im Modulbereich liegt,
+        # und steigt dann ueber dispatcher_exit aus. Entschieden wird weiterhin
+        # am Tor in StaticRecompCore_Run.cpp. Steht zuletzt, weil er
+        # StaticRecompCore.h gegen den von recompcore-abi-gaps.patch bereits
+        # geaenderten Zustand anfasst. Siehe docs/16-RUECKWEG.md.
+        @{
+            File = 'recompcore-rueckweg.patch'
+            Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
+        }
+        # Leerlaufpruefung: direkt abgebildeter Zwischenspeicher vor
+        # m_busy_wait_cache. Die Pruefung wird bei 93 bis 98 Prozent aller
+        # Dispatches gefragt, und jede Frage war ein Hash-Zugriff auf eine
+        # Tabelle, die nicht in den L1 passt. Gemessen 9 Prozent Bildrate,
+        # in drei Paaren ohne Ueberschneidung. Steht nach dem Rueckweg, weil
+        # er StaticRecompCore.h gegen den dort bereits geaenderten Zustand
+        # anfasst. Siehe docs/21-KOSTEN-DES-KERNS.md.
+        @{
+            File = 'recompcore-leerlauf-zwischenspeicher.patch'
+            Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
         }
     )
 

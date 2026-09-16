@@ -1,0 +1,89 @@
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
+@@ -145,9 +145,17 @@
+   if (IsDebuggingEnabled() || IsBranchWatchEnabled())
+     return false;
+ 
++  const u32 schnellfach = (address >> 2) & (BUSY_WAIT_FAST_SIZE - 1);
++  if (m_busy_wait_fast_enabled && m_busy_wait_fast_key[schnellfach] == address)
++    return m_busy_wait_fast_val[schnellfach];
++
+   const auto cached = m_busy_wait_cache.find(address);
+   if (cached != m_busy_wait_cache.end())
++  {
++    m_busy_wait_fast_key[schnellfach] = address;
++    m_busy_wait_fast_val[schnellfach] = cached->second;
+     return cached->second;
++  }
+ 
+   constexpr std::size_t max_loop_instructions = 64;
+   analyzer.Analyze(address, &code_block, &m_code_buffer,
+@@ -160,6 +168,8 @@
+                                           return op.branchIsIdleLoop && op.branchTo == address;
+                                         });
+   m_busy_wait_cache.emplace(address, is_busy_wait);
++  m_busy_wait_fast_key[schnellfach] = address;
++  m_busy_wait_fast_val[schnellfach] = is_busy_wait;
+   return is_busy_wait;
+ }
+ 
+@@ -372,6 +382,7 @@
+   m_hot_chunk_hi = 0;
+   m_hot_chunk_index = -1;
+   m_hot_chunk_enabled = std::getenv("STATICRECOMP_NO_CHUNKCACHE") == nullptr;
++  m_busy_wait_fast_enabled = std::getenv("STATICRECOMP_NO_BWCACHE") == nullptr;
+ 
+ 
+   // Der Modulbereich als Bereichsvergleich fuer den Rueckweg.
+@@ -447,6 +458,7 @@
+ void StaticRecompCore::ClearCache()
+ {
+   m_busy_wait_cache.clear();
++  std::fill(std::begin(m_busy_wait_fast_key), std::end(m_busy_wait_fast_key), 0u);
+   if (m_fallback_jit)
+     m_fallback_jit->ClearCache();
+ 
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
+@@ -229,6 +229,23 @@
+ 
+   bool m_collect_dispatch_samples = false;
+   std::unordered_map<u32, bool> m_busy_wait_cache;
++
++  // Direkt abgebildeter Zwischenspeicher vor m_busy_wait_cache (docs/21).
++  //
++  // Die Leerlaufpruefung fragt IsBusyWaitLoop immer dann, wenn das Modul mit
++  // dem Gastzeiger auf dem Einsprung zurueckkehrt. Gemessen ist das bei 93
++  // bis 98 Prozent aller Dispatches so. Jede dieser Fragen kostete bisher
++  // einen Hash-Zugriff auf eine Tabelle, die nicht in den L1 passt; hier sind
++  // es zwei Ladungen aus 8 KiB. Gemessen bringt das 9 Prozent Bildrate.
++  //
++  // Die Hash-Tabelle bleibt massgeblich: Dieser Zwischenspeicher wird an
++  // denselben Stellen geleert wie sie, und STATICRECOMP_NO_BWCACHE=1 schaltet
++  // ihn zur Gegenprobe ab.
++  static constexpr u32 BUSY_WAIT_FAST_SIZE = 1024;      // Zweierpotenz
++  bool m_busy_wait_fast_enabled = true;                 // Messschalter
++  u32 m_busy_wait_fast_key[BUSY_WAIT_FAST_SIZE] = {};   // 0 heisst: leer
++  bool m_busy_wait_fast_val[BUSY_WAIT_FAST_SIZE] = {};
++
+   u32 m_idle_pc = 0;
+ };
+ 
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_SMC.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_SMC.cpp
+@@ -89,6 +89,7 @@
+   if (!changed)
+     return;
+   m_busy_wait_cache.clear();
++  std::fill(std::begin(m_busy_wait_fast_key), std::end(m_busy_wait_fast_key), 0u);
+   std::fill(m_chunk_host_call_state.begin(), m_chunk_host_call_state.end(), u8{0});
+   m_active_rel_sections = std::move(discovered);
+   std::vector<Memory::RelocationAlias> aliases;
+@@ -422,6 +423,7 @@
+ void StaticRecompCore::OnICacheInvalidate(u32 address, u32 length)
+ {
+   m_busy_wait_cache.clear();
++  std::fill(std::begin(m_busy_wait_fast_key), std::end(m_busy_wait_fast_key), 0u);
+   if (m_fallback_jit)
+   {
+     m_fallback_jit->GetBlockCache()->InvalidateICache(address, length, false);
