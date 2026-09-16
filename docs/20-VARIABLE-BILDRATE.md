@@ -486,13 +486,35 @@ des Laufs ohne, das Zwischenbild der Mitschnitt des Laufs mit:
 Bild 420 ist der Beleg: Das präsentierte Bild liegt zu gleichen Teilen
 zwischen seinen Nachbarn. Bild 520 zeigt die Grenze des Verfahrens: Die
 Änderung von A nach B steckt dort nicht in Matrizen, das Zwischenbild ist
-B. Die Pixel, die nur im Zwischenbild anders sind (bis 2,7 Prozent bei
-800 und 900), haben eine andere Ursache als in der Dateiauswahl: Das
-echte Bild geht durch die XFB-Kopie mit ihrem Kopierfilter und der
-Skalierung von 528 auf 480 Zeilen, das Zwischenbild kommt als Blit direkt
-aus dem 640×528-Schatten. **Das ist die nächste Arbeit an Schritt 4:**
-Das Zwischenbild muss denselben Kopierweg nehmen wie das echte Bild, sonst
-flimmern feine Kanten mit 30 Hz zwischen zwei Filterungen.
+B.
+
+**Derselbe Kopierweg wie das echte Bild.** Das Zwischenbild kam zunächst
+als Blit direkt aus dem 640×528-Schatten, das echte Bild geht durch die
+XFB-Kopie mit Kopierfilter, Gamma und Zeilenskalierung (hier auf 448
+Zeilen). Damit die beiden Präsentationen eines Bildes nicht verschieden
+gefiltert sind, nimmt das Zwischenbild jetzt denselben Weg:
+`TextureCacheBase::CopyEFBToTarget` (neu, Nachbau des Farbfalls von
+`CopyEFBToCacheEntry`) kopiert den Schatten mit den Parametern der
+XFB-Kopie des Bildes in eine eigene Textur, die dann präsentiert wird —
+kein Cache-Eintrag, kein RAM. Geprüft: Die kopierte Textur (`mid_<n>.png`
+im Dump-Verzeichnis) zeigt Bild für Bild denselben Inhalt wie der Schatten.
+
+Die Pixel, die nur im Zwischenbild anders sind (bis 3,6 Prozent bei den
+Bildern 800 und 900), hatte ich zuerst dieser Filterung zugeschrieben. Das
+war falsch — mit dem gemeinsamen Kopierweg bleiben sie (10.763 bei Bild
+900). Die Maske zeigt, wo sie liegen: eine fliegende Möwe oben links, die
+sich je Bild um mehr als ihre eigene Breite bewegt und im Zwischenbild an
+einer Stelle steht, an der weder A noch B sie zeigen, und die
+Wellenkämme des Wassers, die im Zwischenbild in einer Zwischenphase
+liegen. Das ist echte Bewegung; das Pixelmaß „zwischen A und B" kann sie
+nicht erfassen. Als Fehlermaß taugen diese Pixel deshalb nicht.
+
+Eine Falle beim Vergleichen, gefunden an einem Ausreißer: Die Sonde
+liefert die Eingaben der Folge nach Wanduhr, nicht nach Bildnummer. Läuft
+nebenher ein zweiter Lauf, verschieben sich die Eingaben um Bilder, der
+Bildzähler weicht ab (962 statt 967), und Bild 520 des einen Laufs ist
+nicht Bild 520 des anderen. Vergleichbar sind nur Läufe mit gleicher
+Bildzahl.
 
 ## Was vorab zu prüfen war
 

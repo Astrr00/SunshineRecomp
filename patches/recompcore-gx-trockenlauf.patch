@@ -168,12 +168,13 @@
    std::unique_ptr<AbstractPipeline> m_efb_color_resolve_pipeline;
 --- a/Source/Core/VideoCommon/GXDryRun.cpp
 +++ b/Source/Core/VideoCommon/GXDryRun.cpp
-@@ -0,0 +1,631 @@
+@@ -0,0 +1,693 @@
 +#include "VideoCommon/GXDryRun.h"
 +
 +#include <cstdio>
 +#include <cstdlib>
 +#include <cstring>
++#include <memory>
 +#include <string>
 +
 +#include "VideoCommon/DataReader.h"
@@ -181,7 +182,11 @@
 +#include "Common/HookableEvent.h"
 +#include "VideoCommon/BPStructs.h"
 +#include "Core/System.h"
++#include "VideoCommon/AbstractFramebuffer.h"
++#include "VideoCommon/AbstractGfx.h"
 +#include "VideoCommon/AbstractTexture.h"
++#include "VideoCommon/TextureCacheBase.h"
++#include "VideoCommon/TextureConfig.h"
 +#include "VideoCommon/BPMemory.h"
 +#include "VideoCommon/BoundingBox.h"
 +#include "VideoCommon/FramebufferManager.h"
@@ -232,6 +237,21 @@
 +bool s_last_was_duplicate = false; // die vorige Praesentation wiederholte ein Bild
 +MathUtil::Rectangle<int> s_frame_src_rect;  // EFB-Ausschnitt der XFB-Kopie des abgeschlossenen Bildes
 +MathUtil::Rectangle<int> s_mid_src_rect;
++// Das Zwischenbild nimmt denselben Kopierweg wie das echte Bild: eine
++// XFB-Kopie (Kopierfilter, Gamma, Zeilenskalierung) vom Schatten in eine
++// eigene Textur. Sonst waeren die beiden Praesentationen eines Bildes
++// verschieden gefiltert und feine Kanten flimmerten mit 30 Hz (docs/20).
++struct XfbCopyParams
++{
++  u32 width = 0, height = 0;
++  float y_scale = 1.0f, gamma = 1.0f;
++  bool clamp_top = false, clamp_bottom = false;
++  CopyFilterCoefficients::Values filter{};
++};
++XfbCopyParams s_frame_xfb;   // Parameter der XFB-Kopie des abgeschlossenen Bildes
++std::unique_ptr<AbstractTexture> s_mid_texture;
++std::unique_ptr<AbstractFramebuffer> s_mid_framebuffer;
++bool s_mid_valid = false;    // s_mid_texture traegt das Zwischenbild dieser Praesentation
 +u64 s_presents = 0, s_presents_duplicate = 0, s_presented_mid = 0;
 +u64 s_frames = 0;            // zweite Durchlaeufe
 +u64 s_bytes = 0;             // mitgeschriebene Bytes insgesamt
@@ -567,13 +587,10 @@
 +
 +const AbstractTexture* PresentOverride(MathUtil::Rectangle<int>* source_rc)
 +{
-+  if (!s_mid_ready || !g_framebuffer_manager)
-+    return nullptr;
-+  const AbstractTexture* mid = g_framebuffer_manager->GetShadowColorTexture();
-+  if (!mid)
++  if (!s_mid_ready || !s_mid_valid || !s_mid_texture)
 +    return nullptr;
 +  *source_rc = s_mid_src_rect;
-+  return mid;
++  return s_mid_texture.get();
 +}
 +
 +void Record(const u8* data, u32 size)
@@ -616,6 +633,20 @@
 +  s_frame_src_rect = MathUtil::Rectangle<int>(
 +      bpmem.copyTexSrcXY.x, bpmem.copyTexSrcXY.y, bpmem.copyTexSrcXY.x + bpmem.copyTexSrcWH.x + 1,
 +      bpmem.copyTexSrcXY.y + bpmem.copyTexSrcWH.y + 1);
++  // Wie BPStructs.cpp fuer die XFB-Kopie: Zeilenzahl aus der Y-Skalierung.
++  {
++    const UPE_Copy copy = bpmem.triggerEFBCopy;
++    const float y_scale = copy.scale_invert ? 256.0f / static_cast<float>(bpmem.dispcopyyscale) :
++                                              static_cast<float>(bpmem.dispcopyyscale) / 256.0f;
++    static constexpr float gamma_lut[4] = {1.0f, 1.7f, 2.2f, 2.2f};
++    s_frame_xfb.width = s_frame_src_rect.GetWidth();
++    s_frame_xfb.height = static_cast<u32>(1.0f + bpmem.copyTexSrcWH.y * y_scale);
++    s_frame_xfb.y_scale = y_scale;
++    s_frame_xfb.gamma = gamma_lut[static_cast<u32>(copy.gamma.Value()) & 3];
++    s_frame_xfb.clamp_top = copy.clamp_top != 0;
++    s_frame_xfb.clamp_bottom = copy.clamp_bottom != 0;
++    s_frame_xfb.filter = bpmem.copyfilter.GetCoefficients();
++  }
 +  CopySnapshot(&s_frame_start, s_start);
 +  Take(&s_start);  // die naechste Mitschrift beginnt mit der XFB-Kopie selbst
 +  if (g_interpolate)
@@ -710,15 +741,43 @@
 +        g_framebuffer_manager->GetEFBColorTexture()->Save(
 +            s_dump_dir + "/schatten_" + std::to_string(s_frame_index) + ".png", 0))
 +      ++s_shadow_dumps;
-+    g_framebuffer_manager->SwapOutShadow();
 +    // Stufe 4: nur ein interpoliertes Bild, nur bei 30 Bildern je Sekunde
-+    // (vorige Praesentation eine Wiederholung, diese ein neues Bild).
-+    if (g_present_mid && interpolate_this && !duplicate && previous_duplicate)
++    // (vorige Praesentation eine Wiederholung, diese ein neues Bild). Der
++    // Schatten ist noch der aktive EFB: XFB-Kopie in die Zwischenbild-Textur.
++    s_mid_valid = false;
++    if (g_present_mid && interpolate_this && !duplicate && previous_duplicate &&
++        s_frame_xfb.width > 0 && s_frame_xfb.height > 0)
 +    {
-+      s_mid_ready = true;
-+      s_mid_src_rect = s_frame_src_rect;
-+      ++s_presented_mid;
++      const u32 w = g_framebuffer_manager->EFBToScaledX(s_frame_xfb.width);
++      const u32 h = g_framebuffer_manager->EFBToScaledY(s_frame_xfb.height);
++      if (!s_mid_texture || s_mid_texture->GetWidth() != w || s_mid_texture->GetHeight() != h)
++      {
++        s_mid_framebuffer.reset();
++        s_mid_texture = g_gfx->CreateTexture(
++            TextureConfig(w, h, 1, g_framebuffer_manager->GetEFBLayers(), 1,
++                          AbstractTextureFormat::RGBA8, AbstractTextureFlag_RenderTarget,
++                          AbstractTextureType::Texture_2DArray),
++            "GXDryRun Zwischenbild");
++        if (s_mid_texture)
++          s_mid_framebuffer = g_gfx->CreateFramebuffer(s_mid_texture.get(), nullptr);
++      }
++      if (s_mid_texture && s_mid_framebuffer)
++      {
++        const bool linear_filter =
++            g_framebuffer_manager->GetEFBScale() != 1 || s_frame_xfb.y_scale > 1.0f;
++        g_texture_cache->CopyEFBToTarget(s_mid_framebuffer.get(), s_mid_texture.get(),
++                                         s_frame_src_rect, linear_filter, s_frame_xfb.gamma,
++                                         s_frame_xfb.clamp_top, s_frame_xfb.clamp_bottom,
++                                         s_frame_xfb.filter);
++        s_mid_valid = true;
++        s_mid_ready = true;
++        if (DumpNow(s_frame_index))
++          s_mid_texture->Save(s_dump_dir + "/mid_" + std::to_string(s_frame_index) + ".png", 0);
++        s_mid_src_rect = MathUtil::Rectangle<int>(0, 0, static_cast<int>(w), static_cast<int>(h));
++        ++s_presented_mid;
++      }
 +    }
++    g_framebuffer_manager->SwapOutShadow();
 +  }
 +  Apply(s_end);
 +  if (bbox_was_enabled)
@@ -772,6 +831,9 @@
 +{
 +  s_after_present.reset();
 +  s_after_frame.reset();
++  s_mid_framebuffer.reset();
++  s_mid_texture.reset();
++  s_mid_valid = s_mid_ready = false;
 +  if (g_capture)
 +  {
 +    std::fprintf(stderr,
@@ -927,6 +989,93 @@
    }
  
    if (m_onscreen_ui)
+--- a/Source/Core/VideoCommon/TextureCacheBase.cpp
++++ b/Source/Core/VideoCommon/TextureCacheBase.cpp
+@@ -2836,6 +2836,67 @@
+   return true;
+ }
+ 
++void TextureCacheBase::CopyEFBToTarget(AbstractFramebuffer* framebuffer, AbstractTexture* texture,
++                                       const MathUtil::Rectangle<int>& src_rect,
++                                       bool linear_filter, float gamma, bool clamp_top,
++                                       bool clamp_bottom,
++                                       const CopyFilterCoefficients::Values& coefficients)
++{
++  // Nachbau von CopyEFBToCacheEntry fuer den Farbfall der XFB-Kopie.
++  const std::array<u32, 3> filter_coefficients = GetVRAMCopyFilterCoefficients(coefficients);
++  g_framebuffer_manager->FlushEFBPokes();
++  const AbstractPipeline* copy_pipeline = g_shader_cache->GetEFBCopyToVRAMPipeline(
++      TextureConversionShaderGen::GetShaderUid(EFBCopyFormat::XFB, false, false, false,
++                                               1.0f / gamma, filter_coefficients));
++  if (!copy_pipeline)
++  {
++    WARN_LOG_FMT(VIDEO, "Skipping EFB copy to target due to missing pipeline.");
++    return;
++  }
++  const auto scaled_src_rect = g_framebuffer_manager->ConvertEFBRectangle(src_rect);
++  const auto framebuffer_rect = g_gfx->ConvertFramebufferRectangle(
++      scaled_src_rect, g_framebuffer_manager->GetEFBFramebuffer());
++  AbstractTexture* src_texture = g_framebuffer_manager->ResolveEFBColorTexture(framebuffer_rect);
++  g_gfx->BeginUtilityDrawing();
++  src_texture->FinishedRendering();
++  struct Uniforms
++  {
++    float src_left, src_top, src_width, src_height;
++    std::array<u32, 3> filter_coefficients;
++    float gamma_rcp;
++    float clamp_top;
++    float clamp_bottom;
++    float pixel_height;
++    u32 padding;
++  };
++  Uniforms uniforms;
++  const float rcp_efb_width = 1.0f / static_cast<float>(g_framebuffer_manager->GetEFBWidth());
++  const u32 efb_height = g_framebuffer_manager->GetEFBHeight();
++  const float rcp_efb_height = 1.0f / static_cast<float>(efb_height);
++  uniforms.src_left = framebuffer_rect.left * rcp_efb_width;
++  uniforms.src_top = framebuffer_rect.top * rcp_efb_height;
++  uniforms.src_width = framebuffer_rect.GetWidth() * rcp_efb_width;
++  uniforms.src_height = framebuffer_rect.GetHeight() * rcp_efb_height;
++  uniforms.filter_coefficients = filter_coefficients;
++  uniforms.gamma_rcp = 1.0f / gamma;
++  const u32 top_coord = clamp_top ? framebuffer_rect.top : 0;
++  uniforms.clamp_top = (static_cast<float>(top_coord) + .5f) * rcp_efb_height;
++  const u32 bottom_coord = (clamp_bottom ? framebuffer_rect.bottom : efb_height) - 1;
++  uniforms.clamp_bottom = (static_cast<float>(bottom_coord) + .5f) * rcp_efb_height;
++  uniforms.pixel_height = g_ActiveConfig.bCopyEFBScaled ? rcp_efb_height : 1.0f / EFB_HEIGHT;
++  uniforms.padding = 0;
++  g_vertex_manager->UploadUtilityUniforms(&uniforms, sizeof(uniforms));
++  g_gfx->SetAndDiscardFramebuffer(framebuffer);
++  g_gfx->SetViewportAndScissor(framebuffer->GetRect());
++  g_gfx->SetPipeline(copy_pipeline);
++  g_gfx->SetTexture(0, src_texture);
++  g_gfx->SetSamplerState(0, linear_filter ? RenderState::GetLinearSamplerState() :
++                                            RenderState::GetPointSamplerState());
++  g_gfx->Draw(0, 3);
++  g_gfx->EndUtilityDrawing();
++  texture->FinishedRendering();
++}
++
+ void TextureCacheBase::CopyEFBToCacheEntry(RcTcacheEntry& entry, bool is_depth_copy,
+                                            const MathUtil::Rectangle<int>& src_rect,
+                                            bool scale_by_half, bool linear_filter,
+--- a/Source/Core/VideoCommon/TextureCacheBase.h
++++ b/Source/Core/VideoCommon/TextureCacheBase.h
+@@ -285,6 +285,14 @@
+                               MathUtil::Rectangle<int>* display_rect);
+ 
+   virtual void BindTextures(BitSet32 used_textures, const std::array<SamplerState, 8>& samplers);
++  // Trockenlauf (WP14, Schritt 4): dieselbe Farbkopie wie fuer den XFB, aber in
++  // ein fremdes Ziel -- kein Cache-Eintrag, kein RAM. Vom Schatten-EFB zum
++  // Zwischenbild, damit beide Praesentationen eines Bildes gleich gefiltert sind.
++  void CopyEFBToTarget(AbstractFramebuffer* framebuffer, AbstractTexture* texture,
++                       const MathUtil::Rectangle<int>& src_rect, bool linear_filter, float gamma,
++                       bool clamp_top, bool clamp_bottom,
++                       const CopyFilterCoefficients::Values& filter_coefficients);
++
+   void CopyRenderTargetToTexture(u32 dstAddr, EFBCopyFormat dstFormat, u32 width, u32 height,
+                                  u32 dstStride, bool is_depth_copy,
+                                  const MathUtil::Rectangle<int>& srcRect, bool isIntensity,
 --- a/Source/Core/VideoCommon/VertexLoaderManager.cpp
 +++ b/Source/Core/VideoCommon/VertexLoaderManager.cpp
 @@ -3,6 +3,8 @@

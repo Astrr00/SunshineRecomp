@@ -184,19 +184,24 @@ dreifacher Vergrößerung Blöcke, jeder andere Kern Verläufe.
 | bilinear | 42,2 % | 75,6 % |
 | bspline | 40,0 % | 75,6 % |
 | mitchell | 41,4 % | 75,0 % |
+| catmull-rom | 42,2 % | 74,5 % |
+| sharp-bilinear | 49,4 % | 75,4 % |
+| area | 52,4 % | 75,4 % |
+| hermite | 42,6 % | 75,5 % |
+| auto | 41,6 % | 75,5 % |
 
 Nearest gegen Bilinear, ein Bild auseinander aufgenommen (724 und 723):
 mittlere Abweichung 9,3 je Kanal, 43 Prozent der Pixel verschieden; im
 vergrößerten Ausschnitt Treppen gegen weiche Kanten. Damit ist belegt, dass
 die Kerne den Weg bis zum Fenster nehmen — auf Lavapipe; was sie auf einer
-Grafikkarte kosten, bleibt Windows vorbehalten. Die fünf übrigen Kerne
-(catmull-rom, sharp-bilinear, area, hermite, auto) sind mit demselben
-Werkzeug in wenigen Minuten nachzuholen; der Lauf dafür wurde abgebrochen.
+Grafikkarte kosten, bleibt Windows vorbehalten. Alle neun Kerne sind
+gemessen (die zweite Hälfte in einem eigenen Lauf, Bildnummern 720–724):
+`sharp-bilinear` und `area` liegen erwartungsgemäß zwischen Nearest und
+den weichen Kernen, `auto` verhält sich wie `bilinear`.
 
 ## Offen
 
-1. Die fünf übrigen Kerne mit `window_capture.py` nachmessen; Geschwindigkeit
-   der Kerne auf einer echten Grafikkarte (Windows).
+1. Geschwindigkeit der Kerne auf einer echten Grafikkarte (Windows).
 2. 3840x2160 als Ausgabeauflösung fahren.
 3. Eine Schärfungsstufe prüfen. Im Baum gibt es **kein** FSR/RCAS; wer sie
    will, muss sie als Nachbearbeitungsshader hinzufügen.
