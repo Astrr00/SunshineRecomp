@@ -137,7 +137,7 @@ def command_bake(args: argparse.Namespace) -> int:
     code = _load_code(args)
     if args.aspect:
         aspect = gecko.parse_aspect(args.aspect)
-        code = gecko.retarget_aspect(code, aspect)
+        code = gecko.retarget_aspect(code, aspect, hud=args.hud_2d)
         print(f"Seitenverhaeltnis: {args.aspect} = {aspect:.6f} "
               f"(0x{gecko.aspect_bits(aspect):08X} nach "
               f"0x{gecko.ASPECT_ADDRESS:08X})")
@@ -270,6 +270,11 @@ def main(argv: list[str] | None = None) -> int:
                                    "(0x80412408); die uebrigen Schreibungen des "
                                    "Codes bleiben unberuehrt. Siehe "
                                    "docs/19-ULTRAWIDE.md")
+    bake_command.add_argument("--hud-2d", action="store_true",
+                              help="zusaetzlich die 2D-Ebene skalieren. UNFERTIG: "
+                                   "die rechte Kante wandert mit, die linke nicht, "
+                                   "das Bild wird dadurch unsymmetrisch. Nur zum "
+                                   "Weitersuchen, siehe docs/19-ULTRAWIDE.md")
     bake_command.add_argument("--report", type=Path,
                               help="Befund zusaetzlich als JSON ablegen")
     bake_command.set_defaults(handler=command_bake)

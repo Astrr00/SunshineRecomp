@@ -103,6 +103,27 @@ ASPECT_16_9 = 0x3FE38E39
 SCALE_ADDRESS = 0x80416B74
 SCALE_16_9 = 0x3F9A7643
 
+# Die 2D-Ebene haengt an einer eigenen Stelle. Gemessen an denselben vier
+# Aufzeichnungen: Der orthografische Maszstab geht von 0,003333 (also 1/300)
+# auf 0,0025 (1/400), und das Wort an 0x80416758 geht dabei von 600 auf 800 --
+# die halbe Breite ist 300 beziehungsweise 400. Beide Stuetzstellen liegen
+# exakt auf Breite = 450 mal Seitenverhaeltnis (450*4/3 = 600, 450*16/9 = 800).
+HUD_WIDTH_ADDRESS = 0x80416758
+HUD_WIDTH_16_9 = 0x44480000      # 800.0
+HUD_WIDTH_PER_ASPECT = 450.0
+
+# Die rechte Kante der 2D-Ebene. Aus Maszstab und Versatz der gemessenen
+# orthografischen Projektion laesst sich der Bereich ausrechnen:
+#   4:3   Maszstab 0,003333 = 2/600, Versatz -1,00  ->  Bereich   0 .. 600
+#   16:9  Maszstab 0,002500 = 2/800, Versatz -0,75  ->  Bereich -100 .. 700
+# Die 700 sind genau die beiden Schreibungen unten (600 auf 700). Die rechte
+# Kante ist 300 plus halbe Breite, also 300 + 225 mal Seitenverhaeltnis; das
+# trifft 600 bei 4:3 und 700 bei 16:9.
+EDGE_ADDRESSES = (0x804123E8, 0x80416620)
+EDGE_16_9 = 0x442F0000           # 700.0
+EDGE_BASE = 300.0
+EDGE_PER_ASPECT = 225.0
+
 
 def _f32(bits: int) -> float:
     return struct.unpack(">f", struct.pack(">I", bits))[0]
@@ -149,15 +170,35 @@ def aspect_of_scale(bits: int) -> float:
     return _f32(bits) / SCALE_PER_ASPECT
 
 
-def retarget_aspect(code: GeckoCode, aspect: float) -> GeckoCode:
+def hud_width_bits(aspect: float) -> int:
+    """Die Breite der 2D-Ebene an 0x80416758 fuer ein Seitenverhaeltnis."""
+    return aspect_bits(aspect * HUD_WIDTH_PER_ASPECT)
+
+
+def edge_bits(aspect: float) -> int:
+    """Die rechte Kante der 2D-Ebene fuer ein Seitenverhaeltnis."""
+    return aspect_bits(EDGE_BASE + aspect * EDGE_PER_ASPECT)
+
+
+def retarget_aspect(code: GeckoCode, aspect: float, hud: bool = False) -> GeckoCode:
     """Denselben Code mit einem anderen Seitenverhaeltnis.
 
-    Geaendert wird genau die eine Stelle, deren Wirkung gemessen ist:
-    0x80416B74. Das Wort an 0x80412408 bleibt auf 16/9 -- es zu aendern hatte
-    in der Messung keine Wirkung, und was es sonst tut, ist offen. Wer es
-    mitaendern will, braucht dafuer erst einen Beleg.
+    Geaendert wird in der Vorgabe nur 0x80416B74, die Projektion der Kamera.
+    Sie ist vollstaendig belegt: 64:27 misst 2,3704, 32:9 misst 3,5556.
 
-    Geprueft wird vorher, dass beide Stellen so aussehen wie erwartet.
+    ``hud=True`` skaliert zusaetzlich die 2D-Ebene (0x80416758 und die beiden
+    Kanten). Das ist **unfertig** und deshalb nicht Vorgabe: Gemessen wandert
+    damit die rechte Kante mit, die linke bleibt bei -100 stehen. Bei 16:9 ist
+    der Bereich -100 bis 700, also symmetrisch um den Spielraum 0 bis 600; bei
+    64:27 wird er -100 bis 833,33 und damit unsymmetrisch. Solange die Stelle
+    der linken Kante nicht gefunden ist, waere das eine Verschlechterung.
+    Siehe docs/19-ULTRAWIDE.md.
+
+    Das Wort an 0x80412408 bleibt auf 16/9: Es zu aendern hatte in der Messung
+    keine Wirkung, und was es sonst tut, ist offen. Wer es mitaendern will,
+    braucht dafuer erst einen Beleg.
+
+    Geprueft wird vorher, dass alle Stellen so aussehen wie erwartet.
     """
     def genau_eins(addresse, erwartet, was):
         treffer = [w for w in code.writes if w.address == addresse]
@@ -169,10 +210,18 @@ def retarget_aspect(code: GeckoCode, aspect: float) -> GeckoCode:
                              f"({was}), gefunden {treffer[0].value:#010x}.")
 
     genau_eins(ASPECT_ADDRESS, ASPECT_16_9, "Datenkonstante 16/9")
-    genau_eins(SCALE_ADDRESS, SCALE_16_9, "die wirksame Stelle")
+    genau_eins(SCALE_ADDRESS, SCALE_16_9, "Projektion der Kamera")
+    if hud:
+        genau_eins(HUD_WIDTH_ADDRESS, HUD_WIDTH_16_9, "Breite der 2D-Ebene")
+        for adresse in EDGE_ADDRESSES:
+            genau_eins(adresse, EDGE_16_9, "rechte Kante der 2D-Ebene")
 
-    neu = scale_bits(aspect)
-    writes = [Write(w.address, neu) if w.address == SCALE_ADDRESS else w
+    ersatz = {SCALE_ADDRESS: scale_bits(aspect)}
+    if hud:
+        ersatz[HUD_WIDTH_ADDRESS] = hud_width_bits(aspect)
+        for adresse in EDGE_ADDRESSES:
+            ersatz[adresse] = edge_bits(aspect)
+    writes = [Write(w.address, ersatz[w.address]) if w.address in ersatz else w
               for w in code.writes]
     return GeckoCode(name=f"{code.name} @ {aspect:.6f}", writes=writes,
                      injections=list(code.injections),

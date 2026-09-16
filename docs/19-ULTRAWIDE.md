@@ -152,6 +152,41 @@ Fassungen, waagerecht 1,523569 / 1,153296 / 0,864972 / 0,576648.
 Projektion gar nicht änderte. Ob bei 32:9 wirklich mehr Geometrie gezeichnet
 wird — also ob das Culling mitgeht — ist damit **nicht** gezeigt.
 
+## Die 2D-Ebene folgt nicht — und warum sie unberührt bleibt
+
+Dieselben Aufzeichnungen zeigen die zweite Hälfte des Bildes, und dort ist
+Ultrawide **nicht** fertig. Die orthografische Projektion der 32 2D-Draws:
+
+| Fassung | Maßstab | Versatz | daraus der Bereich |
+|---|---|---|---|
+| 4:3 | 0,003333 = 2/600 | −1,000000 | 0 … 600 |
+| 16:9 | 0,002500 = 2/800 | −0,750000 | −100 … 700 |
+| 64:27, nur Kamera geändert | 0,002500 | −0,750000 | −100 … 700 — **stehengeblieben** |
+
+Bei 16:9 ist der Bereich symmetrisch um den Spielraum 0 … 600: je 100 Einheiten
+links und rechts. Bei Ultrawide bleibt er auf den 16:9-Werten.
+
+Die rechte Kante ist gefunden: die beiden Schreibungen `0x804123E8` und
+`0x80416620` gehen von 600 auf 700, und 700 ist genau die rechte Kante. Als
+Gerade: Kante = 300 + 225 × Seitenverhältnis, was 600 bei 4:3 und 700 bei 16:9
+trifft. Mit `--hud-2d` gebacken und gemessen:
+
+| Fassung | Maßstab | Versatz | Bereich |
+|---|---|---|---|
+| 16:9 | 0,002500 | −0,750000 | −100 … 700 (unverändert, richtig) |
+| 64:27 | **0,002143** | **−0,785714** | **−100 … 833,33** |
+
+Die rechte Kante wandert also mit. **Die linke nicht.** Damit wäre das Bild
+bei 64:27 unsymmetrisch — 100 Einheiten links gegen 233 rechts —, und das ist
+schlechter als der 16:9-Zustand, nicht besser.
+
+**Deshalb ist die 2D-Skalierung nicht Vorgabe.** `--aspect` ändert nur die
+Kamera; `--hud-2d` schaltet die unfertige 2D-Skalierung zum Weitersuchen dazu.
+Die offene Frage ist eng: Woher kommt die linke Kante −100? Sie ist keine der
+dreizehn direkten Schreibungen; in Frage kommen die eingefügten
+Ganzzahlkonstanten (−87, 593, 600, 515, 497, −5000) und die drei ersetzten
+Befehle (`li` mit 746, −106, 572).
+
 ## Die Zusage
 
 Damit der Befund nicht eine einmalige Messung bleibt, ist er eine Zusage des
@@ -178,8 +213,9 @@ ist die Projektion, nicht der Kern.
   am linken und rechten Rand Dinge fehlen, die dort stehen müssten. Die
   Zeichenbefehlzahl taugt dafür nicht als Beleg (siehe oben); das braucht einen
   Bildvergleich am echten Fenster.
-- Belegt ist die **Projektion**, nicht das **Bild**. Dass die Kamera weiter
-  sieht, heißt noch nicht, dass HUD, Effekte und Filme dabei richtig sitzen.
+- Belegt ist die **Projektion der Kamera**, nicht das **Bild**. Dass die Kamera
+  weiter sieht, heißt noch nicht, dass HUD, Effekte und Filme dabei richtig
+  sitzen — die 2D-Ebene folgt nachweislich nicht (siehe oben).
 - HUD-Verankerung ist für 16:9 in [15](15-WIDESCREEN-ABNAHME.md) am Bild
   abgenommen; für 21:9 und 32:9 steht das aus.
 - Filme bleiben unberührt und werden gestreckt ([15](15-WIDESCREEN-ABNAHME.md),
