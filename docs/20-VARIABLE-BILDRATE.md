@@ -547,7 +547,9 @@ Null-Backend, ganze Eingabefolge, ohne Trockenlauf: 57,4 s Einkern gegen
 Null-Grafik hat der GPU-Faden kaum Arbeit; was er auf einer Grafikkarte
 abnimmt, sagt erst Schritt 6.
 
-## Schritt 5: Entwurf, nicht gebaut
+## Schritt 5: gebaut und im Mitschnitt gemessen
+
+> Der folgende Entwurf ist umgesetzt; die Messung steht am Ende des Abschnitts.
 
 Stand heute: `VideoBackendBase.cpp:112` ruft `Presenter::ViSwap` je
 VI-Feld, also mit 60 Hz; `SecondPass` hängt an `before_present_event` und
@@ -584,10 +586,43 @@ Trockenlauf; für 60 Hz mit einem Zwischenbild reicht das, für 120 Hz
 nicht ohne weitere Beschleunigung des Kerns oder Rasterung auf der
 Grafikkarte (Schritt 6).
 
-Messung, wenn es gebaut ist: Betweenness der n Zwischenbilder gegen A und
-B mit der Erwartung, dass die Abstände zu A und B mit t wandern; Tonstrom
-und Spielzustand unverändert (Abnahme wie bisher); und auf dem
-Windows-Rechner die Bildfolge auf dem Monitor.
+**Gebaut** (`MODERNGEKKO_GX_DRYRUN_PRESENT=m`, m = 1 wie bisher, m = 2 für
+120 Hz aus 30 Hz): Je Spielbild 2m Präsentierungen mit t = i/(2m). i = 1
+ist das VI-Feld mit dem neuen Bild, i = m + 1 das VI-Feld mit der
+Wiederholung, i = 2m das echte Bild; die übrigen kommen aus einem
+CoreTiming-Ereignis in emulierter Zeit (`Presenter::PresentIntermediate`,
+Kette: jedes Ereignis meldet das nächste an, das VI-Feld dazwischen die
+Fortsetzung). `SecondPass` ist in `RunPass(t, i)` zerlegt, die Zuordnung
+läuft einmal je Bild, die Zeichenbefehle eines Bildes bleiben bis zur
+nächsten Bildgrenze. Im Zwischenbild-Modus präsentiert der Presenter auch
+Wiederholungen, und der Bildmitschnitt schreibt je Präsentation
+(`[gx-dryrun] mitschnitt=<n> bild=<k> i=<i> t=<t>` im Fehlerkanal nennt zu
+jeder Datei Bild, Durchlauf und t).
+
+**Ein Irrtum in Schritt 4, dabei gefunden:** „Die Wiederholung danach zeigt
+das echte Bild" stimmte nicht — Dolphin überspringt Wiederholungen
+(`SkipDuplicateXFBs`, Voreinstellung an), sie wurden gar nicht
+präsentiert; mit Stufe 4 sah der Bildschirm nur Zwischenbilder, 30 je
+Sekunde. Seit dieser Änderung werden Wiederholungen im Zwischenbild-Modus
+präsentiert.
+
+Gemessen, m = 2, erste 960 Bilder auf Vulkan/Lavapipe, 3.847 Mitschnitte
+für 1.944 VI-Präsentierungen und 1.907 Zwischen-Präsentierungen, 2.854
+Durchläufe, kein Durchlauf vorzeitig beendet, Exit-Code 0. A und B sind
+die echten Bilder k − 1 und k aus demselben Lauf (i = 2m):
+
+| Bild | A→B | t = 0,25: gegen A / gegen B | t = 0,5 | t = 0,75 | im Intervall |
+|---|---|---|---|---|---|
+| 420 (Titel blendet auf) | 20,1 % | 3,4 % / 15,5 % | 9,2 % / 8,6 % | 16,2 % / 2,7 % | 99,6 % |
+| 520 (Blitz, nicht in Matrizen) | 46,3 % | 46,3 % / 0,1 % | 46,3 % / 0,1 % | 46,3 % / 0,1 % | 99,9 % |
+| 600 | 1,1 % | 0,7 % / 0,7 % | 0,9 % / 0,5 % | 1,0 % / 0,3 % | 90–93 % |
+| 800 | 1,3 % | 0,9 % / 0,9 % | 1,0 % / 0,8 % | 1,1 % / 0,6 % | 72–87 % |
+| 900 | 1,8 % | 1,4 % / 1,2 % | 1,6 % / 1,0 % | 1,7 % / 0,7 % | 77–88 % |
+
+Die Abstände wandern mit t: bei 420 von 3,4 auf 16,2 Prozent zu A und von
+15,5 auf 2,7 zu B. Das ist der Beleg für Schritt 5 im Mitschnitt. Was er
+nicht zeigt: die Bildfolge auf einem Monitor mit 120 Hz und ob die
+Emulation die dreifachen Durchläufe in Echtzeit schafft — beides Schritt 6.
 
 ## Messung im Spiel: der Flugplatz
 
