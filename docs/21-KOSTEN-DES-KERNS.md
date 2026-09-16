@@ -1,9 +1,14 @@
 # Warum der native Kern langsam ist
 
-Stand: 2026-09-16. Der Auftraggeber hat das Ziel präzisiert: „dass das Spiel
-nativ mit so viel Fps läuft". [16-RUECKWEG.md](16-RUECKWEG.md) hat den nativen
-Kern hergestellt und dabei gemessen, dass er **langsamer** ist als der
-Ersatz-JIT. Dieses Dokument sagt, woran das liegt — gemessen, nicht erschlossen.
+Stand: 2026-09-16, am selben Tag um den Nachtrag ergänzt. Der Auftraggeber
+hat das Ziel präzisiert: „dass das Spiel nativ mit so viel Fps läuft".
+[16-RUECKWEG.md](16-RUECKWEG.md) hat den nativen Kern hergestellt und dabei
+gemessen, dass er **langsamer** ist als der Ersatz-JIT. Dieses Dokument sagt,
+woran das liegt — gemessen, nicht erschlossen.
+
+> **Nachtrag vom 2026-09-16** am Ende des Dokuments: Zwei der drei Vorschläge
+> aus „Zwei Hebel" sind gemessen und wirkungslos, einer ist berichtigt, und
+> die Leerlaufprüfung hat **9 % Bildrate** hergegeben.
 
 **Kurz:** Ein Dispatch kostet **173,5 Wirtszyklen** und führt dabei **9,2
 Gasttakte** aus. Das Modul gibt die Kontrolle also alle neun Gastbefehle an die
@@ -153,6 +158,141 @@ begonnen.**
 
 Der zweite Hebel ist der größere: Er verkleinert nicht einen Posten, sondern
 die Anzahl, mit der beide Posten multipliziert werden.
+
+## Nachtrag vom 2026-09-16: gemessen, drei Berichtigungen, ein Gewinn
+
+Die drei Vorschläge aus „Zwei Hebel" sind gebaut und gemessen worden. Zwei
+Aussagen von oben sind dadurch widerlegt, eine ist zu berichtigen, und dabei
+ist ein Posten gefunden worden, der **9 % Bildrate** bringt.
+
+### Berichtigung 1: Profiler gibt es hier
+
+Oben steht „ohne einen Profiler (in dieser Umgebung nicht vorhanden)". Das war
+falsch: `gdb`, `valgrind` mit `callgrind`, `gprof` und `gprofng` sind
+installiert. Brauchbar war davon keiner: Ein `callgrind`-Lauf mit
+Cache-Simulation über das 90 MiB große Modul hatte nach neun Minuten noch kein
+einziges Bild erzeugt und wurde abgebrochen. Weitergemessen wurde deshalb mit
+A/B-Läufen und Zählern — aus Kostengründen, nicht aus Mangel an Werkzeug.
+
+### Berichtigung 2: Die Abrechnung zu bündeln bringt nichts
+
+Der erste Hebel oben lautet, vieles an der Abrechnung „würde je Burst genügen
+statt je Dispatch". Gebaut: ein Bündel von bis zu n Blöcken je Abrechnung.
+Kachelzustand, Ausnahmen und Host-Call-Adressen werden weiter je Block
+geprüft; gebündelt sind nur Taktverbuchung, Zeitbasis, Taktbudget und
+Leerlaufprüfung. Ungedrosselt, 300 Bilder, Bilder je Sekunde:
+
+| Bündel | Runde 1 | Runde 2 |
+|---|---|---|
+| 1 | 23,56 | 23,56 |
+| 16 | 23,77 | 23,69 |
+| 64 | 23,51 | 22,66 |
+| 64, zusätzlich ohne Kachel- und Host-Call-Prüfung | 23,59 | 23,96 |
+
+Nichts. Die Gegenprobe ohne die beiden Prüfungen ändert ebenfalls nichts —
+auch sie sind kein Posten. Ein zweiter Anlauf, bei dem `ctx->downcount` je
+Block geleert wird (sonst verbraucht das Bündel das modulinterne
+Schleifenbudget und jede Schleife verlässt das Modul sofort), ergab 25,30 /
+25,83 gegen 25,73 / 25,47 bei Bündel 8 und 26,05 / 26,66 bei Bündel 32 —
+höchstens 3 %, innerhalb der Streuung zweier Läufe derselben Einstellung. Der
+Code ist deshalb wieder entfernt; er kostete Wahlfreiheit bei der
+Leerlauferkennung und brachte nichts.
+
+### Der Gewinn: die Leerlaufprüfung fragte über einen Hash
+
+Beim Zählen, **warum** ein Bündel endet, fiel der eigentliche Posten auf. Bei
+Bündel 64, 300 Bilder:
+
+| Abbruchgrund | Anzahl | Anteil |
+|---|---|---|
+| Gastzeiger steht wieder auf dem Einsprung | 137.589.470 | **98,4 %** |
+| `ppc.Exceptions` | 954.101 | 0,7 % |
+| Bündellänge erreicht | 1.141.288 | 0,8 % |
+| Taktbudget | 104.622 | 0,07 % |
+| `ctx->exception` | 6.478 | 0,005 % |
+| Adresse nicht gedeckt | 178 | 0,0001 % |
+| Host-Call | 0 | 0 |
+
+Das Modul kehrt also bei **98 %** aller Dispatches mit dem Gastzeiger auf
+genau der Adresse zurück, an der es betreten wurde. Genau dann fragt die
+Schleife `IsBusyWaitLoop(address)` — und diese Funktion begann mit
+
+```cpp
+const auto cached = m_busy_wait_cache.find(address);
+```
+
+einem Hash-Zugriff auf eine `std::unordered_map`, die nicht in den L1 passt,
+rund 197 Millionen Mal je 300 Bilder. Davor sitzt jetzt ein direkt
+abgebildeter Zwischenspeicher aus 1.024 Einträgen (8 KiB): Schlüssel und Wert,
+zwei Ladungen. Die Hash-Tabelle bleibt maßgeblich und wird an denselben
+Stellen geleert wie zuvor.
+
+Gegenprobe, **dieselbe Binärdatei**, nur `STATICRECOMP_NO_BWCACHE=1`
+unterscheidet sich:
+
+| Runde | mit Zwischenspeicher | ohne |
+|---|---|---|
+| 1 | 26,46 | 23,86 |
+| 2 | 26,00 | 24,08 |
+| 3 | 26,35 | 24,33 |
+| Mittel | **26,27** | 24,09 |
+
+**+9,0 %**, in allen drei Paaren ohne Überschneidung.
+`patches/recompcore-leerlauf-zwischenspeicher.patch`.
+
+Die Antwort selbst ändert sich nicht: Der Schlüssel ist die volle Adresse, und
+geleert wird an denselben drei Stellen wie die Hash-Tabelle. Alle drei
+Abnahmeszenarien bestehen damit unverändert — `nativ` 8 von 8 (35,71 % nativ),
+`boot` 10 von 10, `spielstart` 11 von 11 mit `gpMarioAddress` = `0x80E9AD44`,
+2.399 Bildern und 82,58 s Ton.
+
+### Berichtigung 3: Wo der zweite Hebel wirklich sitzt
+
+Oben steht, das Modul gebe „bei fast jedem Sprung ab" und die Lösung liege
+darin, dass es solche Sprünge selbst auflöst. Der Blick in den erzeugten Code
+schärft das:
+
+- **Direkte Aufrufe über Kachelgrenzen geben bereits nicht ab.**
+  `emit_cross_chunk_call` (`DolRecomp/src/backend/emitter.c`) erzeugt
+  `func_XXXX(ctx);` und springt danach zur Fortsetzung zurück.
+- **Kachelinterne Schleifen laufen bis `DOLRECOMP_C_LOOP_CYCLE_BUDGET`**,
+  voreingestellt 256 verbuchte Takte. Die Konstante steht in einem
+  `#ifndef`-Block und ist über `-D` beim Modulbau überschreibbar.
+- **Abgegeben wird bei Sprüngen, deren Ziel erst zur Laufzeit feststeht**:
+  `emit_dynamic_branch` schreibt `ctx->pc = target; return;`. Das trifft
+  `blr`, `bctr` und `bctrl`, also jeden Funktionsrücksprung über eine
+  Funktionsgrenze und jeden Aufruf über einen Zeiger.
+
+**Was ein Wiedereintritt kostet, steht im Maschinencode.** Jede Kachelfunktion
+beginnt mit einem `switch (ctx->pc)` über 4.096 Fälle — einen je Befehlswort.
+`clang` macht daraus eine Sprungtabelle (Auszug aus `func_80009600`):
+
+```
+mov    $0x7fff6a00,%eax
+add    0x280(%rdi),%eax        ; ctx->pc
+rol    $0x1e,%eax              ; (pc - Basis) / 4
+cmp    $0xfff,%eax
+ja     <Vorgabezweig>
+lea    <Tabelle>(%rip),%rcx
+movslq (%rcx,%rax,4),%r8       ; Ladung aus 3,5 MiB .rodata
+add    %rcx,%r8
+jmp    *%r8                    ; indirekter Sprung
+```
+
+221 Kacheln mal 16 KiB ergeben die 3,5 MiB `.rodata` des Moduls. Jeder
+Dispatch zahlt eine Ladung daraus an praktisch zufälliger Stelle und einen
+indirekten Sprung, den kein Sprungvorhersager trifft. Das ist der Preis der
+Eigenschaft „jede Befehlsadresse ist ein Einsprungpunkt".
+
+### Was offen bleibt
+
+Ein Widerspruch ist nicht aufgelöst: 98 % der Rückkehren landen auf der
+Einsprungadresse, aber je Dispatch werden nur **9,2 Takte** verbucht. Ein
+Ausstieg über das Schleifenbudget müsste 256 verbuchen. Es sind also kurze
+Schleifen, die je Runde einmal abgeben — welcher Zweig des Erzeugers das tut,
+ist noch nicht belegt. Wer das klärt, findet vermutlich den größten
+verbliebenen Posten; `m_dispatch_samples` (`--collect-dispatch-samples`)
+liefert die heißen Adressen dafür.
 
 ## Was das für das Ziel bedeutet
 

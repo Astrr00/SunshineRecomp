@@ -198,6 +198,17 @@ function Add-Patches {
             File = 'recompcore-rueckweg.patch'
             Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
         }
+        # Leerlaufpruefung: direkt abgebildeter Zwischenspeicher vor
+        # m_busy_wait_cache. Die Pruefung wird bei 93 bis 98 Prozent aller
+        # Dispatches gefragt, und jede Frage war ein Hash-Zugriff auf eine
+        # Tabelle, die nicht in den L1 passt. Gemessen 9 Prozent Bildrate,
+        # in drei Paaren ohne Ueberschneidung. Steht nach dem Rueckweg, weil
+        # er StaticRecompCore.h gegen den dort bereits geaenderten Zustand
+        # anfasst. Siehe docs/21-KOSTEN-DES-KERNS.md.
+        @{
+            File = 'recompcore-leerlauf-zwischenspeicher.patch'
+            Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
+        }
     )
 
     foreach ($entry in $patches) {
