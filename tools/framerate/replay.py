@@ -64,14 +64,16 @@ def configure(user: Path, resampling: int | None = None,
 def replay(dff: Path, player: Path, output: Path, images: int, timeout: float = 300,
            backend: str = "Vulkan", resampling: int | None = None,
            window: tuple[int, int] | None = None,
-           internal: int | None = None) -> list[Path]:
+           internal: int | None = None, platform: str = "headless") -> list[Path]:
     if output.exists():
         raise ReplayError(f"{output} existiert; Belege werden nicht ueberschrieben")
     user = output / "user"
     configure(user, resampling, window, internal)
     frames = user / "Dump/Frames"
     frames.mkdir(parents=True)
-    cmd = [str(player), "-p", "headless", "-u", str(user), "-v", backend, "-e", str(dff)]
+    # "headless" hat keine Ausgabeflaeche, also keinen Skalierer (docs/18).
+    # "x11" unter Xvfb gibt dem Praesentierer eine echte Swapchain auf Lavapipe.
+    cmd = [str(player), "-p", platform, "-u", str(user), "-v", backend, "-e", str(dff)]
     env = dict(os.environ)
     with (output / "stdout.log").open("w") as log:
         proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env,
