@@ -73,6 +73,9 @@ def main() -> int:
                         "des Frontends, mehrfach moeglich (etwa scaler=nearest). "
                         "Anders als --core-setting geht das an ModernGekkos "
                         "eigene Einstellungen, nicht an Dolphins Dolphin.ini.")
+    p.add_argument("--x11", action="store_true",
+                   help="Statt kopflos ein X11-Fenster (etwa unter xvfb-run). Die Laufzeit "
+                        "kann Vulkan nur mit Ausgabeflaeche; kopflos stuerzt sie damit ab.")
     p.add_argument("--graphics", default="Null",
                    help="Grafik-Backend der Laufzeit; Null zeichnet nichts. Vulkan rendert "
                         "kopflos auf Lavapipe (docs/20, Schatten-EFB).")
@@ -123,7 +126,8 @@ def main() -> int:
         (user / "GameSettings").mkdir()
         (user / "GameSettings/GMSE01.ini").write_bytes(args.cheats_ini.read_bytes())
 
-    cmd = [str(args.runtime.resolve()), "--headless", "--game", str(args.game.resolve()),
+    cmd = [str(args.runtime.resolve()), "-X11" if args.x11 else "--headless",
+           "--game", str(args.game.resolve()),
            "--user-dir", str(user), "--automation-dir", str(auto),
            # Ein in config.ini gesetzter Backend gewinnt ueber den kopflosen
            # Null-Backend; deshalb ausdruecklich auf der Befehlszeile.
