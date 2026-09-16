@@ -91,6 +91,11 @@ prüfen.
 **5. Taktentkopplung** auf dem GPU-Faden, Dualcore. Setzt `CPUThread = True`
 voraus — im ganzen Projektbaum steht heute kein einziger Setzer dafür.
 
+> **Nachtrag vom 2026-09-16:** Der Satz war falsch. `tools/netplay_session.cpp`
+> setzt `Config::MAIN_CPU_THREAD` für Netplay, und über Dolphin.ini
+> (`[Core] CPUThread=True`, in der Sonde per `--core-setting`) lässt sich
+> der Zweikernbetrieb einschalten. Siehe „Schritt 5: Vorabprüfung".
+
 **6. Kosten auf der Zielhardware.** Bilder je Sekunde und 99. Perzentil bei
 n = 2, 3, 4 und interner Skalierung 1x, 2x, 3x sowie 4K. **Das geht nur auf dem
 Windows-Rechner des Auftraggebers.**
@@ -516,11 +521,64 @@ Bildzähler weicht ab (962 statt 967), und Bild 520 des einen Laufs ist
 nicht Bild 520 des anderen. Vergleichbar sind nur Läufe mit gleicher
 Bildzahl.
 
+## Schritt 5: Vorabprüfung, der Zweikernbetrieb läuft
+
+Stand: 2026-09-16, gemessen auf dem Null-Backend, ganze Eingabefolge,
+`CPUThread=True` über `--core-setting`.
+
+| Lauf | Bilder | Exit-Code | Trockenlauf |
+|---|---|---|---|
+| Zweikern, ohne Trockenlauf | 2.101 | 0 | — |
+| Zweikern, Stufe 3 mit Präsentieren | 2.114 | 0 | 2.132 Bilder, 0 vorzeitig beendet, 28 Schnitte, 4.279 Präsentierungen, 2.147 Wiederholungen, 2.099 ersetzt |
+
+Der statische Kern läuft im Zweikernbetrieb (die Gleichheit des Ergebnisses
+über 180 Bilder mit Tonmitschnitt steht unten unter „Was vorab zu prüfen
+war"), und der zweite Durchlauf läuft dort auf dem GPU-Faden, wo
+`before_present_event` ihn ruft. Eine Stelle
+musste dafür weichen: `CopyPreprocessCPStateFromMain` im Zurücklesen des
+Schnappschusses — im Zweikernbetrieb gehört der Vorverarbeitungsstand dem
+CPU-Faden. Was Schritt 5 darüber hinaus verlangt, ist die Entkopplung des
+Präsentierens vom VI-Takt (mehr als ein Zwischenbild je Spielbild, t ≠ 0,5,
+Ausgabe mit der Bildrate des Monitors); das ist nicht gebaut.
+
+Was der Zweikernbetrieb hier bringt: nichts. Ungedrosselt auf dem
+Null-Backend, ganze Eingabefolge, ohne Trockenlauf: 57,4 s Einkern gegen
+57,1 s Zweikern (2.109 und 2.113 Bilder, rund 37 Bilder je Sekunde). Auf
+Null-Grafik hat der GPU-Faden kaum Arbeit; was er auf einer Grafikkarte
+abnimmt, sagt erst Schritt 6.
+
+## Messung im Spiel: der Flugplatz
+
+Die Eingabefolge `tools/acceptance/fixtures/game-airstrip.json` (neu)
+führt die Startfolge fort: Start-Taste im Vorspann, dann A-Tasten, dann
+Stick — mit Schritten von höchstens 300 Bildern, weil die Sonde je Schritt
+120 s auf die Bestätigung wartet und Lavapipe rund 9 Bilder je Sekunde
+schafft. Ergebnis über 5.113 Bilder auf Vulkan/Lavapipe, Stufe 3: Exit-Code
+0, kein Durchlauf vorzeitig beendet. Der Vorspannfilm läuft bis etwa Bild
+4.050 (die Start-Taste überspringt ihn nicht), dann ein schwarzer
+Übergang, ab etwa Bild 4.300 der Flugplatz von Isle Delfino als Spielszene:
+Peach und Mario, Sprechblase „Mario, be careful!", Kamera steht, nur die
+Figuren atmen. Die Stick-Eingabe bewirkt in der Sprechblase nichts.
+
+| Fenster | Pixel A→B verschieden | Zwischenbild gegen A / gegen B | im Intervall | nur im Zwischenbild |
+|---|---|---|---|---|
+| 2.700–4.050 (Vorspannfilm) | 1,5–10,4 % | = A→B / 0,00 % | 100 % | 0 |
+| 4.350 | 1,62 % | 0,75 % / 0,70 % | 98,9 % | 165 |
+| 4.500–5.100 (fünf Fenster) | 1,54–1,62 % | 0,67–0,75 % / 0,70 % | 99,0 % | 160–162 |
+
+Im Film ändert sich keine Matrix, das Zwischenbild ist Bild B. In der
+Spielszene liegt das Zwischenbild symmetrisch zwischen beiden Nachbarn —
+erste Messung an einer echten 3D-Szene des Spiels, aber ohne Kamerafahrt.
+Die verlangt eine längere Folge durch die Sprechblasen hindurch; der Lauf
+dafür ist angestoßen.
+
 ## Was vorab zu prüfen war
 
 **1. Dualcore-Gleichheit — erledigt und bestanden.** Schritt 5 setzt
 `CPUThread = True` voraus, und im ganzen Projektbaum stand dafür bisher kein
-einziger Setzer. Ob der statische Kern mit Rückweg zweifädig genauso rechnet,
+einziger Setzer (Nachtrag vom 2026-09-16: doch, `tools/netplay_session.cpp`;
+und `CPUThread=True` in Dolphin.ini genügt, siehe „Schritt 5:
+Vorabprüfung"). Ob der statische Kern mit Rückweg zweifädig genauso rechnet,
 war offen. Gemessen, je 180 Bilder mit Tonmitschnitt:
 
 | Gegenstand | einfädig | zweifädig |

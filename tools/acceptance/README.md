@@ -90,3 +90,11 @@ Die Läufe brauchen rund 1, 12 bzw. 1 Minute.
   Tonlänge geraten (3.500 statt 2.401 Bilder, 100 statt 82,6 s); und
   `gpMarioAddress` wurde zunächst an der falschen Adresse gelesen. Genau
   dafür ist der Lauf da.
+
+## `fixtures/game-airstrip.json`
+
+Führt `game-start.json` fort: Start-Taste im Vorspann, A-Tasten, Stick, in
+Schritten von höchstens 300 Bildern (die Sonde wartet je Schritt 120 s auf
+die Bestätigung; auf Lavapipe sind das rund 30 s). Erreicht nach etwa 4.300
+Bildern den Flugplatz von Isle Delfino als Spielszene (Peach, Mario,
+Sprechblase). Keine Zusage, nur Messfolge für docs/20.
