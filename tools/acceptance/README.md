@@ -50,7 +50,7 @@ So steht in einem Szenario genau das, was wirklich zugesagt wird.
 | Datei | Inhalt |
 |---|---|
 | `boot.json` | Start bis Frame 600 ohne Eingabe. Prüft Arena- und Heapgrenzen gegen die in [10-KOPFLOSER-PRUEFSTAND.md](../../docs/10-KOPFLOSER-PRUEFSTAND.md) belegten Werte, dazu Ton und Zähler. |
-| `spielstart.json` | Eingabefolge bis in die Flugplatz-Sequenz (`fixtures/game-start.json`). Prüft unter anderem, dass `gpMarioAddress` (`0x8040E108`) auf ein Objekt in MEM1 zeigt. |
+| `spielstart.json` | Eingabefolge bis in die Dateiauswahl (`fixtures/game-start.json`; sie endet dort, nicht am Flugplatz — berichtigt am 16.09.2026). Prüft unter anderem, dass `gpMarioAddress` (`0x8040E108`) auf ein Objekt in MEM1 zeigt. |
 | `nativ.json` | Kurzer Start, der **den Anteil nativer Ausführung zusagt**. Braucht den Rückweg, der seit dem 2026-09-16 Voreinstellung ist ([16-RUECKWEG.md](../../docs/16-RUECKWEG.md)); mit `STATICRECOMP_NO_YIELD=1` fällt dasselbe Szenario ausdrücklich durch — sonst wäre die Zusage wertlos. |
 | `widescreen.json` | Eingabefolge bis zur 3D-Szene der Dateiauswahl, dort 20 Bilder als FIFO aufgezeichnet, und sagt das **Sichtverhältnis 1,777778** zu. Gilt für eine mit 16:9 gebackene Spielkopie; gegen eine 64:27-Kopie fällt sie ausdrücklich durch. |
 

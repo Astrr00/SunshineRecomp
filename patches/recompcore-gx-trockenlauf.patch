@@ -168,7 +168,7 @@
    std::unique_ptr<AbstractPipeline> m_efb_color_resolve_pipeline;
 --- a/Source/Core/VideoCommon/GXDryRun.cpp
 +++ b/Source/Core/VideoCommon/GXDryRun.cpp
-@@ -0,0 +1,693 @@
+@@ -0,0 +1,694 @@
 +#include "VideoCommon/GXDryRun.h"
 +
 +#include <cstdio>
@@ -442,7 +442,8 @@
 +  std::memcpy(&g_main_cp_state, &from.cp, sizeof(CPState));
 +  std::memcpy(&xfmem, &from.xf, sizeof(XFMemory));
 +  std::memcpy(&bpmem, &from.bp, sizeof(BPMemory));
-+  CopyPreprocessCPStateFromMain();
++  // Kein CopyPreprocessCPStateFromMain: im Zweikernbetrieb gehoert der
++  // Vorverarbeitungsstand dem CPU-Faden, hier laeuft der GPU-Faden.
 +  // Die Verwalter lesen ihren Stand zurueck und markieren sich schmutzig.
 +  std::vector<u8> copy = from.managers;
 +  u8* in = copy.data();
