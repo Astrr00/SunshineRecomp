@@ -31,13 +31,18 @@ ist der aktuelle Stand und der beste Einstieg:
 | [18-SKALIERER.md](18-SKALIERER.md) | Ausgabe-Skalierer als Produktfunktion: neun Kerne, zwei davon erstmals erreichbar. Interner Faktor 6 rendert 3840×2688, also mehr als 4K. Die Bildwirkung des Skalierers braucht ein echtes Fenster und steht aus |
 | [19-ULTRAWIDE.md](19-ULTRAWIDE.md) | Das Seitenverhältnis steht in `0x80416B74` — nach zwei durch Messung widerlegten Annahmen. 64:27 misst 2,3704 und 32:9 misst 3,5556 |
 | [20-VARIABLE-BILDRATE.md](20-VARIABLE-BILDRATE.md) | Plan für WP14 in sechs Schritten, beide Vorabprüfungen erledigt. Nichts gebaut |
-| [21-KOSTEN-DES-KERNS.md](21-KOSTEN-DES-KERNS.md) | **Warum nativ langsam ist:** 173,5 Wirtszyklen je Dispatch bei 9,2 Gasttakten. Nachtrag vom 2026-09-16: das Bündeln der Abrechnung bringt nichts (gemessen), die Leerlaufprüfung brachte 9 %, und **zwei Drittel aller Dispatches sind ein einziges `dcbf`** |
+| [21-KOSTEN-DES-KERNS.md](21-KOSTEN-DES-KERNS.md) | **Warum nativ langsam ist:** 173,5 Wirtszyklen je Dispatch bei 9,2 Gasttakten. Nachtrag vom 2026-09-16: das Bündeln der Abrechnung bringt nichts (gemessen), die Leerlaufprüfung brachte 9 %, und **`dcbf` im Modul zu halten brachte 37 %** — 25,5 auf 34,8 Bilder je Sekunde, erstmals über den 30 Hz der Simulation |
 
 **Wichtig für die nächste Sitzung:** Der Rückweg ist seit dem 2026-09-16
 **Voreinstellung**; `STATICRECOMP_NO_YIELD=1` schaltet ihn aus. Offen bleiben
 19 Lockstep-Meldungen über die ganze Eingabefolge ([17](17-LOCKSTEP.md)) und
 die Geschwindigkeit ([21](21-KOSTEN-DES-KERNS.md)); dort steht am Ende die
 nächste offene Frage samt Werkzeug.
+
+**Modulbau:** Der Patch `dolrecomp-dcbf-bleibt-im-modul.patch` ändert den
+erzeugten Code; ein vorhandener Modul-Cache passt nicht mehr und
+`moderngekko-port build` legt ein neues Verzeichnis an (der Cache-Schlüssel
+enthält die Prüfsumme des `dolrecomp`-Binärs). Rund 60 Minuten.
 
 Neue Werkzeuge im Repository: `tools/symbols`, `tools/widescreen`,
 `tools/framerate`, `tools/audio`, `tools/acceptance` (Abnahmelauf nach

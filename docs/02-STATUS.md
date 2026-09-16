@@ -68,16 +68,16 @@ Zwei Punkte bleiben offen und sind die nächsten Schritte:
    **Voreinstellung** (`STATICRECOMP_NO_YIELD=1` schaltet ihn aus): Ohne ihn
    wäre das Erzeugnis Emulation und kein Port, und jede Messung, die den
    Schalter vergisst, misst wieder das Falsche.
-2. **Geschwindigkeit.** Nativ läuft das Spiel langsamer als mit dem
-   Ersatz-JIT — nach zwei Verbesserungen: 52 %
-   (`moderngekko-host-call-active.patch`) und 9 %
-   (`recompcore-leerlauf-zwischenspeicher.patch`, die Leerlaufprüfung fragte
-   je Dispatch über eine Hash-Tabelle). Die Vermutung, die übrigen Prüfungen
-   würden je Burst genügen, ist gemessen und **widerlegt**
-   ([21](21-KOSTEN-DES-KERNS.md)). Was bleibt, ist der Wiedereintritt selbst:
-   jede Kachelfunktion beginnt mit einer Sprungtabelle über 4.096 Fälle, und
-   das Modul kehrt bei 98 % der Dispatches nach rund neun verbuchten Takten
-   zurück.
+2. **Geschwindigkeit.** Nativ läuft das Spiel noch langsamer als mit dem
+   Ersatz-JIT, hält aber in dieser Umgebung erstmals die 30 Hz der Simulation
+   (**34,8 Bilder je Sekunde ungedrosselt**, vorher 25,5). Drei gemessene
+   Verbesserungen: 52 % (`moderngekko-host-call-active.patch`), 9 %
+   (`recompcore-leerlauf-zwischenspeicher.patch`) und 37 %
+   (`dolrecomp-dcbf-bleibt-im-modul.patch`: zwei Drittel aller Dispatches
+   waren ein einziges `dcbf`, nach dem der Erzeuger grundlos zurückkehrte).
+   Die Vermutung, die Abrechnung je Burst zu bündeln, ist gemessen und
+   **widerlegt** ([21](21-KOSTEN-DES-KERNS.md)). Der nächste Posten liegt im
+   `dcbf`-Haken selbst, nicht mehr im Erzeuger.
 
 Die Frage an ModernGekko ([14](14-FRAGE-AN-MODERNGEKKO.md)) bleibt sinnvoll,
 hat aber einen anderen Inhalt: nicht mehr „ist das der vorgesehene Zustand",

@@ -416,7 +416,40 @@ wird erstmals im Modul genommen. Im Erzeugnis ist das nachgesehen: drei
 `dcbf`-Stellen mit der neuen Bedingung, sieben `icbi`/`dcbi`-Stellen mit dem
 alten `return`.
 
-Der Modulbau dazu läuft; die Messung folgt in diesem Dokument.
+### Gemessen: +37 %, nicht Faktor zwei
+
+Modulbau 62 Minuten. Dieselbe Laufzeit, dieselbe Spielkopie, nur das Modul
+unterscheidet sich; ungedrosselt, 300 Bilder, drei Paare:
+
+| Runde | altes Modul | neues Modul |
+|---|---|---|
+| 1 | 25,39 | 34,71 |
+| 2 | 25,55 | 34,94 |
+| 3 | 25,45 | 34,81 |
+| Mittel | 25,46 | **34,82** |
+
+**+36,8 %**, ohne Überschneidung. Die Zähler bestätigen den Mechanismus
+genau: `native` fällt von 196,8 auf **64,9 Millionen** Dispatches — die
+vorhergesagten zwei Drittel weniger —, während `hook_fb` (136,2 Millionen),
+`cycles` und `bursts` unverändert bleiben. Dieselbe Gastarbeit, dieselben
+Haken, ein Drittel der Wiedereintritte. `smc_failed` = 0.
+
+**Die Abschätzung „Faktor zwei bis zweieinhalb" war zu hoch.** Sie hatte
+unterstellt, mit dem Wiedereintritt fielen alle 173,5 Wirtszyklen je Dispatch
+weg. Weg fällt aber nur der Wiedereintritt selbst; der `dcbf`-Haken läuft
+weiter — als Aufruf über `ctx->instruction_fallback` in den Wirt, mit
+Lockstep-Flag, MSR-Abgleich und Taktverbuchung —, und der ist offenbar der
+größere Teil des Postens. Zwei Drittel weniger Dispatches ergeben 37 % mehr
+Bildrate, also kostete ein `dcbf`-Dispatch nur etwa ein Drittel dessen, was
+ein durchschnittlicher Dispatch kostet. Das ist plausibel: Er führte vier
+Gasttakte aus und nichts Schweres.
+
+Der nächste Posten liegt damit im Haken selbst, nicht mehr im Erzeuger.
+
+Mit **34,8 Bildern je Sekunde ungedrosselt** hält der native Kern in dieser
+Umgebung erstmals die 30 Hz der Simulation — die Voraussetzung, die
+[20-VARIABLE-BILDRATE.md](20-VARIABLE-BILDRATE.md) für die variable Bildrate
+braucht.
 
 ## Was das für das Ziel bedeutet
 
