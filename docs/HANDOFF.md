@@ -30,7 +30,7 @@ ist der aktuelle Stand und der beste Einstieg:
 | [17-LOCKSTEP.md](17-LOCKSTEP.md) | **Der Verifizierer läuft erstmals.** Von 116 gemeldeten Abweichungen kamen 112 aus seiner eigenen Halteregel, die übrigen 4 aus einem Verbuchungsunterschied. In keiner steht ein Rechenfehler des Rekompilats |
 | [18-SKALIERER.md](18-SKALIERER.md) | Ausgabe-Skalierer als Produktfunktion: neun Kerne, zwei davon erstmals erreichbar. Interner Faktor 6 rendert 3840×2688, also mehr als 4K. Die Bildwirkung des Skalierers braucht ein echtes Fenster und steht aus |
 | [19-ULTRAWIDE.md](19-ULTRAWIDE.md) | Das Seitenverhältnis steht in `0x80416B74` — nach zwei durch Messung widerlegten Annahmen. 64:27 misst 2,3704 und 32:9 misst 3,5556 |
-| [20-VARIABLE-BILDRATE.md](20-VARIABLE-BILDRATE.md) | Plan für WP14 in sechs Schritten, beide Vorabprüfungen erledigt. Nichts gebaut |
+| [20-VARIABLE-BILDRATE.md](20-VARIABLE-BILDRATE.md) | Plan für WP14 in sechs Schritten, beide Vorabprüfungen erledigt. **Schritt 1 gebaut und gemessen** (`recompcore-gx-trockenlauf.patch`, `MODERNGEKKO_GX_DRYRUN=1`): der Strom lässt sich ein zweites Mal ausführen, Ton abtastwertgleich. Schritte 2–6 offen |
 | [21-KOSTEN-DES-KERNS.md](21-KOSTEN-DES-KERNS.md) | **Warum nativ langsam ist:** 173,5 Wirtszyklen je Dispatch bei 9,2 Gasttakten. Nachtrag vom 2026-09-16: das Bündeln der Abrechnung bringt nichts (gemessen), die Leerlaufprüfung brachte 9 %, und **`dcbf` im Modul zu halten brachte 37 %** — 25,5 auf 34,8 Bilder je Sekunde, erstmals über den 30 Hz der Simulation |
 
 **Wichtig für die nächste Sitzung:** Der Rückweg ist seit dem 2026-09-16

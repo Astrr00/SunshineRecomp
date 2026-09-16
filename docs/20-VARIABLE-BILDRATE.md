@@ -8,7 +8,8 @@ gerendert wird entkoppelt. Der Vorversuch WP13 ist abgeschlossen
 ([11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md)); er arbeitet **offline** auf
 DFF-Dateien. Dieses Dokument ist der Plan, das in die **Laufzeit** zu bringen.
 
-**Noch ist keine Zeile davon gebaut.** Was hier steht, ist ein Entwurf mit
+**Stand 2026-09-16, später am Tag: Schritt 1 ist gebaut und gemessen**
+(Abschnitt „Schritt 1: gemessen" unten). Alles Weitere ist ein Entwurf mit
 Fundstellen, keine Messung — außer dort, wo ausdrücklich „gemessen" steht.
 
 ## Zwei Befunde, die bestehende Messungen berichtigen
@@ -123,6 +124,47 @@ Frühausstieg in `BPWritten`, gesetzt für die Dauer des zweiten Durchlaufs.
 Drei davon (`SETDRAWDONE`, beide Token) erzeugen Interrupts; sie im zweiten
 Durchlauf durchzulassen hieße, die Spiellogik zu ändern. Das ist genau der
 Maßstab, den der Auftraggeber gesetzt hat.
+
+## Schritt 1: gemessen
+
+`patches/recompcore-gx-trockenlauf.patch` (`VideoCommon/GXDryRun.cpp` und
+vier Einhängepunkte). Mit `MODERNGEKKO_GX_DRYRUN=1` schreibt der Dekodierer
+jeden GP-Befehl des ersten Durchlaufs mit (Display-Listen bereits aufgelöst,
+so wie es auch `FifoRecorder` tut), und `after_present_event` — das auch
+kopflos feuert — dekodiert die Mitschrift auf demselben Faden ein zweites
+Mal. Währenddessen sperrt `BPWritten` die elf Register aus der Tabelle oben,
+und der Vertexlader läuft mit `cullall`. Ohne die Variable ist nichts davon
+aktiv.
+
+Zwei kopflose Läufe, 300 Bilder, Tonmitschnitt, `dcbf`-Modul:
+
+| | ohne Trockenlauf | mit Trockenlauf |
+|---|---|---|
+| Bilder | 303 | 301 |
+| `native` / `cycles` | 65.095.713 / 1.829.259.366 | 64.973.212 / 1.817.312.509 |
+| zweite Durchläufe | — | **307** |
+| mitgeschrieben / erneut dekodiert | — | 1.283.456 / **1.283.456** Bytes |
+| gesperrte BP-Schreibvorgänge | — | 1.111 |
+| Wanduhr | 14,37 s | 14,27 s |
+
+Und der Tonvergleich:
+
+```
+Ausrichtung: Versatz +0 ms, Huellkurven-Korrelation 1.0000
+Abtastwertgleich: die ersten 12.165 s (100.0% der kuerzeren Aufnahme),
+                  insgesamt 100.00% gleiche Abtastwerte
+```
+
+**Die Frage von Schritt 1 ist beantwortet: Ja.** Der Strom lässt sich
+vollständig ein zweites Mal ausführen — jedes mitgeschriebene Byte wurde
+erneut dekodiert —, ohne dass Tonstrom oder Zähler sich ändern. Die 1.111
+gesperrten Schreibvorgänge sind der Beleg, dass der Riegel gebraucht wird:
+gut drei je Bild, darunter die XFB-Kopie und die PE-Token, die sonst
+Interrupts ausgelöst hätten.
+
+Was Schritt 1 nicht zeigt: Zeitkosten (ein zweiter Durchlauf ohne Zeichnen
+ist billig, 0,1 s über 300 Bilder liegen in der Streuung) und Bilder. Beides
+kommt mit Schritt 2.
 
 ## Was vorab zu prüfen war
 

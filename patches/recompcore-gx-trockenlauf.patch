@@ -1,0 +1,248 @@
+--- a/Source/Core/VideoCommon/BPStructs.cpp
++++ b/Source/Core/VideoCommon/BPStructs.cpp
+@@ -3,6 +3,8 @@
+ 
+ #include "VideoCommon/BPStructs.h"
+ 
++#include "VideoCommon/GXDryRun.h"
++
+ #include <algorithm>
+ #include <cstring>
+ #include <string>
+@@ -77,6 +79,11 @@
+   ----------------------------------------------------------------------------------------------------------------
+   */
+ 
++  // Trockenlauf (WP14): im zweiten Durchlauf wirken die Register mit
++  // gastseitiger Nebenwirkung nicht -- dieselbe Liste wie unten.
++  if (GXDryRun::g_active && GXDryRun::BlocksBPRegister(bp.address))
++    return;
++
+   if (((s32*)&bpmem)[bp.address] == bp.newvalue)
+   {
+     if (!(bp.address == BPMEM_TRIGGER_EFB_COPY || bp.address == BPMEM_CLEARBBOX1 ||
+--- a/Source/Core/VideoCommon/CMakeLists.txt
++++ b/Source/Core/VideoCommon/CMakeLists.txt
+@@ -66,6 +66,8 @@
+   FramebufferShaderGen.cpp
+   FramebufferShaderGen.h
+   FrameDumper.cpp
++  GXDryRun.cpp
++  GXDryRun.h
+   FrameDumper.h
+   FrameDumpFFMpeg.h
+   FreeLookCamera.cpp
+--- a/Source/Core/VideoCommon/GXDryRun.cpp
++++ b/Source/Core/VideoCommon/GXDryRun.cpp
+@@ -0,0 +1,102 @@
++#include "VideoCommon/GXDryRun.h"
++
++#include <cstdio>
++#include <cstdlib>
++
++#include "VideoCommon/DataReader.h"
++#include "Common/HookableEvent.h"
++#include "Core/System.h"
++#include "VideoCommon/BPMemory.h"
++#include "VideoCommon/OpcodeDecoding.h"
++#include "VideoCommon/VideoEvents.h"
++#include "VideoCommon/VideoEvents.h"
++
++namespace GXDryRun
++{
++bool g_active = false;
++bool g_capture = false;
++
++namespace
++{
++std::vector<u8> s_buffer;
++Common::EventHook s_after_present;
++u64 s_frames = 0;            // zweite Durchlaeufe
++u64 s_bytes = 0;             // mitgeschriebene Bytes insgesamt
++u64 s_blocked_bp = 0;        // gesperrte BP-Schreibvorgaenge im zweiten Durchlauf
++u64 s_decoded_bytes = 0;     // im zweiten Durchlauf dekodierte Bytes
++}  // namespace
++
++bool BlocksBPRegister(u8 address)
++{
++  switch (address)
++  {
++  case BPMEM_TRIGGER_EFB_COPY:
++  case BPMEM_CLEARBBOX1:
++  case BPMEM_CLEARBBOX2:
++  case BPMEM_SETDRAWDONE:
++  case BPMEM_PE_TOKEN_ID:
++  case BPMEM_PE_TOKEN_INT_ID:
++  case BPMEM_LOADTLUT0:
++  case BPMEM_LOADTLUT1:
++  case BPMEM_TEXINVALIDATE:
++  case BPMEM_PRELOAD_MODE:
++  case BPMEM_CLEAR_PIXEL_PERF:
++    if (g_active)
++      ++s_blocked_bp;
++    return true;
++  default:
++    return false;
++  }
++}
++
++void Record(const u8* data, u32 size)
++{
++  s_buffer.insert(s_buffer.end(), data, data + size);
++  s_bytes += size;
++}
++
++static void SecondPass(PresentInfo&)
++{
++  if (s_buffer.empty())
++    return;
++  // Der zweite Durchlauf laeuft auf demselben Faden wie der erste, nach dem
++  // Praesentieren. Die Mitschrift enthaelt Display-Listen bereits aufgeloest.
++  g_active = true;
++  u32 cycles = 0;
++  DataReader reader(s_buffer.data(), s_buffer.data() + s_buffer.size());
++  const u8* end = OpcodeDecoder::RunFifo<false>(reader, &cycles);
++  s_decoded_bytes += static_cast<u64>(end - s_buffer.data());
++  g_active = false;
++  ++s_frames;
++  s_buffer.clear();
++}
++
++void Initialize()
++{
++  g_capture = std::getenv("MODERNGEKKO_GX_DRYRUN") != nullptr;
++  g_active = false;
++  s_buffer.clear();
++  s_frames = s_bytes = s_blocked_bp = s_decoded_bytes = 0;
++  if (!g_capture)
++    return;
++  s_buffer.reserve(4u << 20);
++  s_after_present = Core::System::GetInstance().GetVideoEvents().after_present_event.Register(
++      SecondPass);
++}
++
++void Shutdown()
++{
++  s_after_present.reset();
++  if (g_capture)
++  {
++    std::fprintf(stderr,
++                 "[gx-dryrun] frames=%llu bytes=%llu decoded=%llu blocked_bp=%llu\n",
++                 (unsigned long long)s_frames, (unsigned long long)s_bytes,
++                 (unsigned long long)s_decoded_bytes, (unsigned long long)s_blocked_bp);
++  }
++  g_capture = false;
++  g_active = false;
++  s_buffer.clear();
++  s_buffer.shrink_to_fit();
++}
++}  // namespace GXDryRun
+--- a/Source/Core/VideoCommon/GXDryRun.h
++++ b/Source/Core/VideoCommon/GXDryRun.h
+@@ -0,0 +1,34 @@
++// Trockenlauf des GX-Befehlsstroms (WP14, Schritt 1; docs/20-VARIABLE-BILDRATE.md).
++//
++// Mit MODERNGEKKO_GX_DRYRUN=1 wird der Befehlsstrom jedes Bildes mitgeschrieben
++// und nach dem Praesentieren ein zweites Mal dekodiert -- ohne zu zeichnen und
++// ohne einen Zustand zu beruehren, den das Spiel liest. Die Frage, die dieser
++// Schritt beantwortet: Laesst sich der Strom ein zweites Mal ausfuehren, ohne
++// Tonstrom und Bildzaehler zu veraendern?
++
++#pragma once
++
++#include <vector>
++
++#include "Common/CommonTypes.h"
++
++namespace GXDryRun
++{
++// Waehrend des zweiten Durchlaufs wahr: BPWritten sperrt die elf Register mit
++// gastseitiger Wirkung, der Vertexlader zeichnet nichts.
++extern bool g_active;
++// Mitschrift eingeschaltet (Umgebungsvariable).
++extern bool g_capture;
++
++void Initialize();
++void Shutdown();
++
++// Vom Dekodierer je GP-Befehl gerufen (nicht fuer GX_CMD_CALL_DL, dessen
++// Inhalt kommt einzeln).
++void Record(const u8* data, u32 size);
++
++// Sperrt ein BP-Register im zweiten Durchlauf? Genau die Liste aus
++// BPWritten (BPStructs.cpp), die Dolphin selbst als Register mit Nebenwirkung
++// fuehrt.
++bool BlocksBPRegister(u8 address);
++}  // namespace GXDryRun
+--- a/Source/Core/VideoCommon/OpcodeDecoding.cpp
++++ b/Source/Core/VideoCommon/OpcodeDecoding.cpp
+@@ -14,6 +14,8 @@
+ 
+ #include "VideoCommon/OpcodeDecoding.h"
+ 
++#include "VideoCommon/GXDryRun.h"
++
+ #include "Common/Assert.h"
+ #include "Common/Logging/Log.h"
+ #include "Core/FifoPlayer/FifoRecorder.h"
+@@ -235,6 +237,12 @@
+       {
+         Core::System::GetInstance().GetFifoRecorder().WriteGPCommand(data, size);
+       }
++      // Trockenlauf (WP14): den ersten Durchlauf mitschreiben, den zweiten nicht.
++      if (GXDryRun::g_capture && !GXDryRun::g_active &&
++          static_cast<Opcode>(data[0]) != Opcode::GX_CMD_CALL_DL)
++      {
++        GXDryRun::Record(data, size);
++      }
+     }
+   }
+ 
+--- a/Source/Core/VideoCommon/VertexLoaderManager.cpp
++++ b/Source/Core/VideoCommon/VertexLoaderManager.cpp
+@@ -3,6 +3,8 @@
+ 
+ #include "VideoCommon/VertexLoaderManager.h"
+ 
++#include "VideoCommon/GXDryRun.h"
++
+ #include <algorithm>
+ #include <iterator>
+ #include <memory>
+@@ -440,7 +442,8 @@
+     // if cull mode is CULL_ALL, tell VertexManager to skip triangles and quads.
+     // They still need to go through vertex loading, because we need to calculate a zfreeze
+     // reference slope.
+-    const bool cullall = (bpmem.genMode.cull_mode == CullMode::All &&
++    const bool cullall = GXDryRun::g_active ||
++                         (bpmem.genMode.cull_mode == CullMode::All &&
+                           primitive < OpcodeDecoder::Primitive::GX_DRAW_LINES);
+ 
+     const int stride = loader->m_native_vtx_decl.stride;
+--- a/Source/Core/VideoCommon/VideoBackendBase.cpp
++++ b/Source/Core/VideoCommon/VideoBackendBase.cpp
+@@ -3,6 +3,8 @@
+ 
+ #include "VideoCommon/VideoBackendBase.h"
+ 
++#include "VideoCommon/GXDryRun.h"
++
+ #include <algorithm>
+ #include <cstring>
+ #include <memory>
+@@ -323,6 +325,7 @@
+   g_efb_interface = std::move(efb_interface);
+ 
+   g_presenter = std::make_unique<VideoCommon::Presenter>();
++  GXDryRun::Initialize();
+   g_frame_dumper = std::make_unique<FrameDumper>();
+   g_framebuffer_manager = std::make_unique<FramebufferManager>();
+   g_shader_cache = std::make_unique<VideoCommon::ShaderCache>();
+@@ -372,6 +375,7 @@
+ void VideoBackendBase::ShutdownShared()
+ {
+   auto& system = Core::System::GetInstance();
++  GXDryRun::Shutdown();
+   system.GetCustomResourceManager().Shutdown();
+ 
+   g_frame_dumper.reset();
