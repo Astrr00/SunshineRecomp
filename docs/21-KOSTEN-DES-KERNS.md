@@ -93,9 +93,37 @@ Elfmal häufiger. Der JIT verkettet seine Blöcke direkt und läuft lange
 Strecken, ohne in C++ zurückzukehren; das Modul kehrt alle neun Gastbefehle
 zurück.
 
+## Zwei weitere Verdächtige in der Schleife, einer davon klein
+
+**Die Kachelsuche.** Sie geht über eine Tabelle mit einem `int` je
+Gast-Befehlswort — 24 MiB, zufällig angesprungen. Ein Dispatch deckt aber nur
+neun Befehle ab und bleibt fast immer in derselben Kachel. Ein
+Ein-Eintrag-Zwischenspeicher (Bereich und Index der zuletzt getroffenen Kachel;
+der **Zustand** wird weiterhin frisch aus `m_chunk_state` gelesen, deshalb
+braucht er bei Zustandsänderungen keine Leerung) im selben Binärcode
+gegeneinander gemessen:
+
+| | Bilder je Sekunde |
+|---|---|
+| mit Zwischenspeicher | 24,52 / 25,31 / 25,04 |
+| ohne | 24,04 / 24,35 / 24,23 |
+
+**+3,1 %**, konsistent über alle drei Paare. Real, aber klein. Er bleibt drin —
+15 Zeilen für 3 % —, er erklärt aber die 80 Zyklen nicht.
+
+**Die Zeitbasis.** `AdvanceGuestTimebase` teilt und modulo-t durch
+`TIMER_RATIO`, eine Konstante; der Übersetzer macht daraus eine Multiplikation.
+Kein Posten.
+
+Damit sind drei naheliegende Erklärungen für die 80 Zyklen der Schleife
+geprüft und zwei davon ausgeschlossen. Wo der Rest sitzt, ist **offen**.
+
 ## Zwei Hebel
 
 **1. Die Schleife billiger machen (≈ 80 Zyklen, in der Laufzeit, patchbar).**
+Bisher gefunden: 3 % durch den Kachel-Zwischenspeicher. Der Rest ist nicht
+lokalisiert; ohne einen Profiler (in dieser Umgebung nicht vorhanden) bleibt
+nur weiteres Ausschlussverfahren.
 Je Dispatch laufen heute: Ladungsprüfung des Kachelzustands, Taktverbuchung,
 `AdvanceGuestTimebase`, Neuberechnung des Taktbudgets, zwei Leerlaufprüfungen
 und zwei Ausnahmeabfragen. Vieles davon würde je Burst genügen statt je
@@ -104,10 +132,24 @@ Verdrahtung von `host_call_active` hat einen indirekten Aufruf je Dispatch
 entfernt und **52 % gebracht** ([16-RUECKWEG.md](16-RUECKWEG.md)).
 
 **2. Seltener zurückgeben (≈ 94 Zyklen mal seltener, im Recompiler).** Neun
-Gastbefehle je Dispatch heißt: Das Modul gibt bei fast jedem Sprung ab. Würde
-es modulinterne Sprünge selbst auflösen — wie der JIT seine Blöcke verkettet —,
-fielen beide Kosten entsprechend seltener an. Das ist eine Änderung an
-DolRecomp und zieht einen Modulbau von rund 65 Minuten nach sich.
+Gastbefehle je Dispatch heißt: Das Modul gibt bei fast jedem Sprung ab.
+Innerhalb einer Kachel springt es per `goto`; die Kacheln fassen 4.096 Befehle,
+also kann die Ursache nicht das Überschreiten von Kachelgrenzen allein sein —
+es sind die Sprünge, deren Ziel erst zur Laufzeit feststeht, allen voran
+Funktionsaufrufe und -rücksprünge.
+
+Die Form der Lösung ist dieselbe, die der JIT benutzt: Das Modul löst solche
+Sprünge selbst auf, statt abzugeben. Es kennt sein Taktbudget bereits
+(`ctx->cycle_budget`, von der Schleife je Dispatch gesetzt) und könnte
+weiterlaufen, bis das Budget erschöpft ist oder die Adresse seine Deckung
+verlässt. Die Schwierigkeit liegt nicht im Ablauf, sondern in der Sicherheit:
+Vor jedem Kacheleintritt prüft heute die Wirtsschleife den Kachelzustand gegen
+selbstmodifizierenden Code. Wer diese Prüfung ins Modul verlegt, muss sie
+genauso streng halten.
+
+Das ist eine Änderung an DolRecomp — einem dritten fremden Baum — und zieht
+einen Modulbau von rund 65 Minuten nach sich. **In dieser Sitzung nicht mehr
+begonnen.**
 
 Der zweite Hebel ist der größere: Er verkleinert nicht einen Posten, sondern
 die Anzahl, mit der beide Posten multipliziert werden.

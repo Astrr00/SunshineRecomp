@@ -93,7 +93,20 @@
  }
 --- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
 +++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
-@@ -16,6 +16,7 @@
+@@ -7,15 +7,20 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
++#include <map>
++#include <vector>
+ #include <sstream>
+ 
+ #include "Common/Config/Config.h"
+ #include "Common/DynamicLibrary.h"
+ #include "Common/FileUtil.h"
++#include <fmt/format.h>
++
+ #include "Common/Logging/Log.h"
  #include "Core/Config/ConfigManager.h"
  #include "Core/Config/MainSettings.h"
  #include "Core/Config/StaticRecompSettings.h"
@@ -101,7 +114,7 @@
  #include "Core/HW/Memmap.h"
  #include "Core/PowerPC/StaticRecomp/StaticRecompLockstep.h"
  #include "Core/System.h"
-@@ -225,18 +226,50 @@
+@@ -225,18 +230,50 @@
    }
  }
  
@@ -154,10 +167,15 @@
    std::vector<std::pair<u32, u64>> dispatch_samples(m_dispatch_samples.begin(),
                                                      m_dispatch_samples.end());
    std::sort(dispatch_samples.begin(), dispatch_samples.end(),
-@@ -331,6 +364,27 @@
+@@ -331,6 +368,32 @@
  
    m_module = desc;
    m_module_active = (desc != nullptr);
++  m_hot_chunk_lo = 1;
++  m_hot_chunk_hi = 0;
++  m_hot_chunk_index = -1;
++  m_hot_chunk_enabled = std::getenv("STATICRECOMP_NO_CHUNKCACHE") == nullptr;
++
 +
 +  // Der Modulbereich als Bereichsvergleich fuer den Rueckweg. Bis der
 +  // Lockstep-Verifizierer zur Verfuegung steht (das Modul exportiert
@@ -199,7 +217,34 @@
  void StaticRecompCore::Run()
  {
    auto& core_timing = m_system.GetCoreTiming();
-@@ -150,7 +158,12 @@
+@@ -43,6 +51,11 @@
+     if (!m_module_active || m_chunk_lookup_table.empty())
+       return false;
+ 
++    // Zuerst der Zwischenspeicher: liegt die Adresse in derselben Kachel wie
++    // beim letzten Mal? Dann entfaellt der Zugriff auf die 24-MiB-Tabelle.
++    if (m_hot_chunk_enabled && address >= m_hot_chunk_lo && address < m_hot_chunk_hi)
++      return m_chunk_state[m_hot_chunk_index] == CHUNK_VERIFIED;
++
+     int lookup_index = -1;
+     if (address >= 0x80000000u && address < 0x80000000u + m_lookup_ram_size)
+     {
+@@ -55,7 +68,13 @@
+     if (lookup_index < 0 || lookup_index >= static_cast<int>(m_chunk_lookup_table.size()))
+       return false;
+     const int chunk = m_chunk_lookup_table[lookup_index];
+-    return chunk >= 0 && m_chunk_state[chunk] == CHUNK_VERIFIED;
++    if (chunk < 0)
++      return false;
++    const StaticRecompRange& bereich = m_module->chunk_ranges[chunk];
++    m_hot_chunk_lo = bereich.start;
++    m_hot_chunk_hi = bereich.end;
++    m_hot_chunk_index = chunk;
++    return m_chunk_state[chunk] == CHUNK_VERIFIED;
+   };
+ 
+   const std::string initial_game_id = SConfig::GetInstance().GetGameID();
+@@ -150,7 +169,12 @@
                                       IsBusyWaitLoop(runtime_dispatch_address);
            if (configured_idle || detected_idle)
            {
@@ -212,7 +257,7 @@
            }
  
            // ctx->timebase is refreshed at burst start (SyncIn), and here we
-@@ -181,6 +194,16 @@
+@@ -181,6 +205,16 @@
        }
        else
        {
@@ -229,7 +274,7 @@
          if (m_guest.host_call && IsHostCallAddress(ppc.pc))
          {
            SyncIn();
-@@ -215,7 +238,31 @@
+@@ -215,7 +249,31 @@
          }
          else if (m_fallback_jit)
          {
@@ -263,7 +308,29 @@
          {
 --- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
 +++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
-@@ -195,6 +195,8 @@
+@@ -165,6 +165,21 @@
+   u32 m_host_call_passthrough_pc = 0;
+   bool m_host_call_passthrough = false;
+   bool m_host_calls_active = false;
++
++  // Ein-Eintrag-Zwischenspeicher fuer die Kachelsuche (docs/21).
++  //
++  // Die Suche geht sonst ueber m_chunk_lookup_table: ein int je Gast-
++  // Befehlswort, also 24 MiB, zufaellig angesprungen -- gemessen rund 31
++  // Wirtszyklen. Ein Dispatch deckt aber nur rund neun Befehle ab und bleibt
++  // damit fast immer in derselben Kachel. Gemerkt wird nur der Bereich und
++  // der Index, NICHT der Zustand: Der wird weiterhin aus m_chunk_state
++  // gelesen (221 Eintraege, immer im Cache). Deshalb muss dieser
++  // Zwischenspeicher bei Zustandsaenderungen nicht geleert werden, sondern
++  // nur, wenn sich die Kachelbereiche selbst aendern.
++  u32 m_hot_chunk_lo = 1;   // lo > hi heisst: leer
++  u32 m_hot_chunk_hi = 0;
++  int m_hot_chunk_index = -1;
++  bool m_hot_chunk_enabled = true;   // Messschalter
+   u64 m_host_call_generation = ~u64{0};
+   std::unique_ptr<JitBase> m_fallback_jit;
+ 
+@@ -195,6 +210,8 @@
    std::vector<u64> m_chunk_retry_after;
    u64 m_smc_probe_clock = 0;
    u64 m_rel_mapping_generation = 0;
