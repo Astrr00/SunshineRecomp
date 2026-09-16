@@ -547,6 +547,48 @@ Null-Backend, ganze Eingabefolge, ohne Trockenlauf: 57,4 s Einkern gegen
 Null-Grafik hat der GPU-Faden kaum Arbeit; was er auf einer Grafikkarte
 abnimmt, sagt erst Schritt 6.
 
+## Schritt 5: Entwurf, nicht gebaut
+
+Stand heute: `VideoBackendBase.cpp:112` ruft `Presenter::ViSwap` je
+VI-Feld, also mit 60 Hz; `SecondPass` hängt an `before_present_event` und
+liefert ein Zwischenbild je Spielbild bei t = 0,5. Die Ausgabe bleibt bei
+60 Hz — 30 Spielbilder, dazwischen je ein Zwischenbild. Schritt 5 löst
+das Präsentieren vom VI-Takt: bei Monitor-Bildrate R sind es je Spielbild
+(33,3 ms) n = R/30 Präsentierungen mit t = 1/n, 2/n, …, das echte Bild
+zuletzt. Das echte Bild erscheint dann ein Spielbild später als ohne
+Interpolation; heute, bei 60 Hz, ist es eine Präsentation.
+
+Was zu bauen ist:
+
+- **Ein Zeitgeber auf dem GPU-Faden.** Im Zweikernbetrieb läuft
+  `Fifo::RunGpuLoop` ohnehin als Schleife (`m_gpu_mainloop.Run`); dort ein
+  Host-Zeitgeber: ist seit der letzten Präsentation 1/R vergangen und steht
+  kein VI-Feld an, `Presenter::PresentIntermediate(t)` mit t aus der
+  Wanduhr zwischen den emulierten Zeitpunkten der letzten beiden XFB-Kopien
+  (`PresentInfo::emulated_timestamp` kennt sie). Im Einkernbetrieb müsste
+  der Zeitgeber ein `CoreTiming`-Ereignis sein — deterministisch, aber die
+  Ausgabe folgt dann der Emulationsgeschwindigkeit, nicht dem Monitor.
+- **`SecondPass` mit t als Parameter** und mehreren Durchläufen je Bild:
+  die Zuordnung (`MatchDraws`) einmal je Bild, das Laden der Zwischenwerte
+  je Durchlauf, das Zwischenbild je Durchlauf über `CopyEFBToTarget`.
+  Die Sperren, der Schatten und die Zustandswiederherstellung bleiben.
+- **Der Bildmitschnitt** schreibt heute je eindeutigem Bild
+  (`FrameDumper::DumpCurrentFrame` mit Bildnummer); für die Messung muss
+  er je Präsentation schreiben.
+
+Kosten, aus den Messungen oben: ein Durchlauf kostet auf dem Null-Backend
++18 Prozent Wanduhr (CPU-Seite). Für 120 Hz aus 30 Hz sind es drei
+Durchläufe je Bild, grob +55 Prozent CPU plus die dreifache Rasterung.
+Ungedrosselt schafft die Messumgebung heute 37 Bilder je Sekunde ohne
+Trockenlauf; für 60 Hz mit einem Zwischenbild reicht das, für 120 Hz
+nicht ohne weitere Beschleunigung des Kerns oder Rasterung auf der
+Grafikkarte (Schritt 6).
+
+Messung, wenn es gebaut ist: Betweenness der n Zwischenbilder gegen A und
+B mit der Erwartung, dass die Abstände zu A und B mit t wandern; Tonstrom
+und Spielzustand unverändert (Abnahme wie bisher); und auf dem
+Windows-Rechner die Bildfolge auf dem Monitor.
+
 ## Messung im Spiel: der Flugplatz
 
 Die Eingabefolge `tools/acceptance/fixtures/game-airstrip.json` (neu)
