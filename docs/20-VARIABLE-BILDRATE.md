@@ -111,10 +111,38 @@ Tonhoehe: Verhaeltnis 1.0000 (+0 Cent)
 Tonstrom.** Die Zählerunterschiede von 0,005 % sind die übliche Streuung
 zwischen zwei Läufen. Schritt 5 hat damit seine Grundlage.
 
-**2. Referenzlauf als Vergleichsbasis — offen.** Ohne ihn ist in den Schritten
-1 bis 4 nichts falsifizierbar, weil dort jede Aussage die Form „identisch zum
-Referenzlauf" hat. Die Läufe `dc-single` und `ls-fix` dieser Sitzung können das
-werden; festgeschrieben ist es nicht.
+**2. Referenzlauf als Vergleichsbasis — erledigt.** Ohne ihn ist in den
+Schritten 1 bis 4 nichts falsifizierbar, weil dort jede Aussage die Form
+„identisch zum Referenzlauf" hat. Der Lauf ist gefahren und hier
+festgeschrieben.
+
+Aufruf (ohne Spieldaten hier reproduzierbar, sobald eine eigene Kopie
+vorliegt):
+
+```bash
+STATICRECOMP_YIELD=1 python3 tools/diagnostics/headless_probe.py     --runtime <moderngekko-run> --game <spiel> --module <modul>     --output <neu> --frames 180 --audio-dump
+```
+
+| Gegenstand | Wert |
+|---|---|
+| Bilder | 181 |
+| `native` | 192.014.501 |
+| `cycles` / `ticks` | 1.441.772.981 / 3.988.899.486 |
+| Anteil nativ | 36,14 % |
+| `smc_failed`, `fallback`, `noprogress` | 0, 0, 0 |
+| `bursts` | 371.831 |
+| Rückwege / abgelehnt | 8.922 / 6.403 |
+| Tonmitschnitt | 32.028 Hz, 2 Kanäle, 262.872 Abtastwerte, **8,208 s** |
+| Ton: Spitze / Effektivwert / Stille | 0,420 / 0,00983 / 87,8 % |
+
+Die Zähler streuen zwischen Läufen um etwa 0,005 % (an der Dualcore-Messung
+oben abgelesen); der **Tonstrom streut nicht** — er war dort über die vollen
+8,208 s abtastwertgleich. Deshalb ist er das Maß, an dem die Schritte 1 bis 4
+zu prüfen sind: `tools/audio compare <referenz> <neu>` muss 100,00 % gleiche
+Abtastwerte und Versatz 0 ms melden. Alles andere ist weicher.
+
+Zusätzlich der Lockstep-Bezugswert (30 Bilder, Prüfmodul): **3.408 geprüft,
+4 Meldungen** ([17-LOCKSTEP.md](17-LOCKSTEP.md)).
 
 ## Größtes Risiko
 
