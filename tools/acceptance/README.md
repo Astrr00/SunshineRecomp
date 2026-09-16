@@ -61,6 +61,12 @@ Am 2026-09-15 auf Linux mit dem gewöhnlichen Modul ausgeführt:
 | `boot` | **bestanden**, 10 von 10 | 607 Bilder, Arena und Heap wie in Dokument 10, 22,35 s Ton, 34,1 % Stille |
 | `spielstart` | **bestanden**, 9 von 9 | 2.401 Bilder, `gpMarioAddress` = `0x80E9AD44`, 82,60 s Ton, 11,5 % Stille |
 
+Am 2026-09-16 mit dem `dcbf`-Modul (`dolrecomp-dcbf-bleibt-im-modul.patch`,
+Dokument 21) wiederholt — `nativ` 8 von 8 (35,45 % nativ), `boot` 10 von 10
+(606 Bilder, 22,32 s Ton), `spielstart` 11 von 11 (`gpMarioAddress` =
+`0x80E9AD44`, 2.396 Bilder, 82,53 s Ton); der Boot-Tonstrom ist gegen das
+alte Modul zu 100,00 % abtastwertgleich.
+
 Am selben Tag mit dem Rückweg (Dokument 16) wiederholt:
 
 | Szenario | Ergebnis | Messwerte |

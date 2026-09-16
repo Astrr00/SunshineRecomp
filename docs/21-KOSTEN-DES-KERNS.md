@@ -446,6 +446,22 @@ Gasttakte aus und nichts Schweres.
 
 Der nächste Posten liegt damit im Haken selbst, nicht mehr im Erzeuger.
 
+**Abnahme mit dem neuen Modul:** `nativ` 8 von 8 (35,45 % nativ), `boot`
+10 von 10 (606 Bilder, 22,32 s Ton), `spielstart` 11 von 11
+(`gpMarioAddress` = `0x80E9AD44`, 2.396 Bilder, 82,53 s Ton, Stapel
+54.216 Bytes über der Grenze). Und der Tonvergleich des Boot-Mitschnitts,
+altes gegen neues Modul, das schärfste Maß:
+
+```
+Ausrichtung: Versatz +0 ms, Huellkurven-Korrelation 1.0000
+Abtastwertgleich: die ersten 22.291 s (100.0% der kuerzeren Aufnahme),
+                  insgesamt 100.00% gleiche Abtastwerte
+```
+
+Der Tonstrom ist über die gesamte gemeinsame Länge **abtastwertgleich**. Das
+neue Modul rechnet, soweit dieses Maß reicht, dasselbe wie das alte — nur
+schneller. Der Lockstep-Lauf mit einem eigens gelinkten Prüfmodul folgt.
+
 Mit **34,8 Bildern je Sekunde ungedrosselt** hält der native Kern in dieser
 Umgebung erstmals die 30 Hz der Simulation — die Voraussetzung, die
 [20-VARIABLE-BILDRATE.md](20-VARIABLE-BILDRATE.md) für die variable Bildrate
