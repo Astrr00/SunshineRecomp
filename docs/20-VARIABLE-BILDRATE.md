@@ -189,7 +189,7 @@ Läufe derselben Folge weichen im Ton nach der ersten Eingabe ohnehin
 voneinander ab. Abtastwertgleich ist nur der eingabefreie Boot zu erwarten,
 und der war es (oben).
 
-## Schritt 2: gebaut, gemessen, Bild steht aus
+## Schritt 2: gebaut und gemessen, mit Bild
 
 `MODERNGEKKO_GX_DRYRUN=2`: Der zweite Durchlauf zeichnet wirklich. Dafür
 hält `FramebufferManager` einen **Schatten-EFB** — ein eigenes Farb-,
@@ -211,12 +211,45 @@ Bounding Box (wird im Pixelshader fortgeschrieben) und die Pixelzähler.
 | vorzeitig beendete Durchläufe | — | 0 von 2.403 |
 | `gpMarioAddress` am Ende | `0x80E9AD44` | `0x80E9AD44` |
 
-Die Differenzen sind das letzte, beim Beenden offene Bild. **Was noch
-aussteht, ist das Bild selbst:** Mit dem Null-Backend, das die kopflosen
-Läufe benutzen, wird nichts gerastert — alle Schattenbilder sind schwarz,
-und ebenso der eigentliche EFB, weil er zum Zeitpunkt des Präsentierens
-schon gelöscht ist. Der Lauf auf Vulkan/Lavapipe (`headless_probe
---graphics Vulkan`, neu) muss das Schattenbild zeigen; er läuft.
+Die Differenzen sind das letzte, beim Beenden offene Bild. Mit dem
+Null-Backend der kopflosen Läufe wird allerdings nichts gerastert — alle
+Schattenbilder sind dort schwarz, und ebenso der eigentliche EFB. Und
+kopflos kann `moderngekko-run` kein Vulkan: Die kopflose Plattform hat keine
+Ausgabefläche, die Laufzeit stürzt damit ab, auch ohne Trockenlauf. Deshalb
+kennt `headless_probe` jetzt `--x11` und `--graphics`.
+
+**Das Bild, auf Vulkan/Lavapipe unter Xvfb, ganze Eingabefolge:**
+
+| | Wert |
+|---|---|
+| Bilder / Wanduhr | 2.377 / 299,6 s (7,9 je Sekunde — Lavapipe rastert doppelt) |
+| zweite Durchläufe, vorzeitig beendet | 2.379, **0** |
+| Zeichenaufrufe erster / zweiter Durchlauf | 373.495 / 373.449 |
+| `gpMarioAddress` am Ende, `smc_failed` | `0x80E9AD44`, 0 |
+| Schattenbilder | 40, alle 60 Bilder eines |
+
+Alle 60 Bilder wurden der Schatten und, zum Vergleich, der eigentliche EFB
+zum selben Zeitpunkt als PNG gesichert. Der Anteil nicht-schwarzer Pixel
+läuft in beiden Bildreihen gleich: 0 % im schwarzen Vorspann, 29,5 % beim
+Aufblenden (Bild 300), dann 80 bis 84 % durch Titel und Dateiauswahl bis in
+die Flugplatz-Sequenz. Pixel für Pixel:
+
+| Bild | mittlere Abweichung je Kanal | Pixel verschieden |
+|---|---|---|
+| 360 | 0,08 | 0,2 % |
+| 1.200 | 1,14 | 13,3 % |
+| 1.800 | 1,13 | 6,3 % |
+| 1.920 | 1,30 | 6,0 % |
+| 2.340 | 0,56 | 1,8 % |
+| 600 | 15,2 | 46,0 % |
+
+Der Schatten trägt das Bild. Die verbleibenden Abweichungen sind erwartbar:
+Der eigentliche EFB wird nach dem Präsentieren gelesen, wenn die CPU im
+Zweikernbetrieb schon Befehle des nächsten Bildes abgesetzt haben kann,
+während der Schatten genau das eine Bild zeigt; Bild 600 fällt in den
+Titelbildschirm mit bewegten Elementen. **Schritt 2 ist damit erbracht**:
+Der zweite Durchlauf zeichnet wirklich, in ein eigenes Paar, und der Gast
+merkt nichts davon.
 
 ## Was vorab zu prüfen war
 
