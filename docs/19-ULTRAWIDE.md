@@ -152,6 +152,25 @@ Fassungen, waagerecht 1,523569 / 1,153296 / 0,864972 / 0,576648.
 Projektion gar nicht änderte. Ob bei 32:9 wirklich mehr Geometrie gezeichnet
 wird — also ob das Culling mitgeht — ist damit **nicht** gezeigt.
 
+## Die Zusage
+
+Damit der Befund nicht eine einmalige Messung bleibt, ist er eine Zusage des
+Abnahmelaufs geworden: `tools/acceptance/widescreen.json` fährt die
+Eingabefolge bis zur 3D-Szene, zeichnet dort 20 Bilder als FIFO auf und sagt
+das Sichtverhältnis **1,777778 ± 0,0005** zu. Gemessen wird die perspektivische
+Projektion mit den meisten Zeichenbefehlen — die Hauptkamera.
+
+Gegenprobe, damit die Zusage nicht wertlos ist:
+
+| Spielkopie | Ergebnis | gemessen |
+|---|---|---|
+| mit 16:9 gebacken | bestanden | 1,777778 |
+| mit 64:27 gebacken | **nicht bestanden** | 2,370371 |
+
+Das Szenario läuft mit `--jit`: Das vorhandene Modul ist für das ungebackene
+DOL gebaut, ein gebackenes bräuchte ein eigenes (rund 65 Minuten). Gegenstand
+ist die Projektion, nicht der Kern.
+
 ## Grenzen
 
 - Geändert wird eine einzige Konstante. Sichtweiten, Culling-Grenzen und die

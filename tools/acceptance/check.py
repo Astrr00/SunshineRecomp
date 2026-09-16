@@ -23,7 +23,9 @@ Ein Szenario ist JSON:
         "audio_min_seconds": 5.0,
         "audio_max_silence_share": 0.95,
         "stack_low_water": {"read": "luecke", "base": "0x80417800",
-                            "floor": "0x80417918", "min_margin": 4096}
+                            "floor": "0x80417918", "min_margin": 4096},
+        "projection_aspect": {"recording": "szene", "frame": 10,
+                              "value": 1.777778, "tolerance": 0.001}
       }
     }
 
@@ -33,6 +35,14 @@ zugesagt wird.
 """
 
 from __future__ import annotations
+
+import sys
+from pathlib import Path as _Path
+
+# Die Projektionszusage liest eine FIFO-Aufzeichnung. Der Zerleger dafuer liegt
+# in tools/framerate und wird nur bei Bedarf geladen, damit check.py ohne ihn
+# lauffaehig bleibt.
+_FRAMERATE = _Path(__file__).resolve().parent.parent / "framerate"
 
 import re
 from dataclasses import dataclass, field
@@ -78,6 +88,34 @@ def counters(stderr: str) -> dict | None:
         return None
     found.setdefault("reverify", found.get("reverify_events", 0))
     return found
+
+
+def _projection_aspect(dff: "_Path", frame: int) -> tuple[float, str]:
+    """Das Sichtverhaeltnis der groessten perspektivischen Projektion.
+
+    Genommen wird die Projektion mit den meisten Zeichenbefehlen: das ist die
+    Hauptkamera. Orthografische Projektionen (HUD, Filme) haben kein
+    Sichtverhaeltnis und bleiben ausser Betracht.
+    """
+    if str(_FRAMERATE) not in sys.path:
+        sys.path.insert(0, str(_FRAMERATE))
+    try:
+        import fifo  # noqa: PLC0415
+        from spike import projections  # noqa: PLC0415
+    except ImportError as error:
+        return 0.0, f"tools/framerate nicht ladbar: {error}"
+    if not dff.is_file():
+        return 0.0, f"{dff} fehlt"
+    try:
+        found = projections(fifo.read(dff), frame)
+    except Exception as error:  # noqa: BLE001 - die Meldung ist fuer Menschen
+        return 0.0, f"Aufzeichnung nicht lesbar: {error}"
+    perspektivisch = [e for e in found
+                      if e.get("kind") == "perspektivisch" and e.get("aspect")]
+    if not perspektivisch:
+        return 0.0, f"Frame {frame} hat keine perspektivische Projektion"
+    groesste = max(perspektivisch, key=lambda e: e["draws"])
+    return float(groesste["aspect"]), ""
 
 
 def _in_range(value: float, bounds: list) -> bool:
@@ -178,6 +216,24 @@ def check(scenario: dict, manifest: dict, stderr: str = "",
             share = found["cycles"] / found["ticks"]
             result.add(f"mindestens {want:.1%} der Gasttakte nativ",
                        share >= want, f"waren {share:.2%}")
+
+    if "projection_aspect" in expect:
+        spec = expect["projection_aspect"]
+        wanted = float(spec["value"])
+        tol = float(spec.get("tolerance", 0.001))
+        was = f"Sichtverhaeltnis der Projektion {wanted:.6f} (+-{tol})"
+        aufnahmen = {_Path(entry["path"]).stem: entry
+                     for entry in manifest.get("recordings", [])}
+        eintrag = aufnahmen.get(spec["recording"])
+        if eintrag is None:
+            result.add(was, False, f"Aufzeichnung {spec['recording']!r} fehlt im Manifest")
+        else:
+            gemessen, fehler = _projection_aspect(_Path(eintrag["path"]),
+                                                  int(spec.get("frame", 0)))
+            if fehler:
+                result.add(was, False, fehler)
+            else:
+                result.add(was, abs(gemessen - wanted) <= tol, f"war {gemessen:.6f}")
 
     if "stack_low_water" in expect:
         spec = expect["stack_low_water"]

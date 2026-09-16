@@ -32,7 +32,7 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 | WP3 | Controller | nicht begonnen | — |
 | WP4 | Launcher, Windows-Anwendung | teilweise | [07](07-ANZEIGE.md), [08](08-WINDOWS-ROM-CONTROLLER.md) |
 | WP5 | Stabilität | teilweise | Stapeltiefe über 30.000 Frames gemessen ([11](11-FRAMERATE-SPIKE.md)); Dauerlauf offen |
-| WP6 | Abnahmelauf | **Grundgeruest steht** | `tools/acceptance` mit drei Szenarien; `boot` (10/10), `spielstart` (11/11) und `nativ` (8/8) am echten Spiel bestanden, 19 Tests ohne Spielkopie ([README](../tools/acceptance/README.md)) |
+| WP6 | Abnahmelauf | **Grundgeruest steht** | `tools/acceptance` mit vier Szenarien; `boot` (10/10), `spielstart` (11/11), `nativ` (8/8) und `widescreen` (5/5) am echten Spiel bestanden, 24 Tests ohne Spielkopie ([README](../tools/acceptance/README.md)) |
 | WP7 | Adressbasis | **erledigt** | `tools/symbols`, 12.573/12.573 Bezeichner gegengeprüft ([09](09-DOL-BEFUNDE.md)) |
 | WP8 | 16:9 im Rekompilat | **Schritte 1–4 belegt** | `tools/widescreen`, gebackenes DOL ohne SMC-Rückfall, Bildabnahme an Projektion und Bild ([15](15-WIDESCREEN-ABNAHME.md)); offen: Culling, Effekte, Filme |
 | WP9 | Ultrawide | **Projektion belegt** | `tools/widescreen bake --aspect`; 64:27 misst 2,3704 und 32:9 misst 3,5556 bei bitgleichem senkrechtem Maszstab ([19](19-ULTRAWIDE.md)). Offen: Bild, HUD, Culling |

@@ -6,6 +6,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 _TOOLS = Path(__file__).resolve().parent.parent / "tools"
 sys.path.insert(0, str(_TOOLS / "acceptance"))
@@ -226,6 +227,66 @@ class StackTests(unittest.TestCase):
     def test_missing_read_is_reported(self):
         scenario = {"name": "t", "frames": 1, "expect": {"stack_low_water": {
             "read": "luecke", "base": "0x80417800", "floor": "0x80417918"}}}
+        result = checker.check(scenario, manifest(), SHUTDOWN)
+        self.assertFalse(result.passed)
+        self.assertIn("fehlt", result.checks[0][2])
+
+
+class ProjectionAspectTests(unittest.TestCase):
+    """Die Zusage fuer das Sichtverhaeltnis (docs/19-ULTRAWIDE.md)."""
+
+    @staticmethod
+    def _dff(path, waagerecht: float, senkrecht: float, ortho: bool = False):
+        """Eine synthetische Aufzeichnung mit genau einer Projektion."""
+        import struct
+        sys.path.insert(0, str(_TOOLS / "framerate"))
+        import fifo  # noqa: PLC0415
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_framerate import CP_STATE, build_dff, primitive, xf_load  # noqa: PLC0415
+
+        def bits(value):
+            return struct.unpack(">I", struct.pack(">f", value))[0]
+
+        stream = (xf_load(0x1020, [bits(waagerecht), 0, bits(senkrecht), 0, 0, 0])
+                  + xf_load(0x1026, [1 if ortho else 0])
+                  + primitive(0x90, 3, 12))
+        path.write_bytes(build_dff([stream], [[]], CP_STATE))
+
+    def _run(self, spec, **kwargs):
+        with TemporaryDirectory() as tmp:
+            dff = Path(tmp) / "szene.dff"
+            self._dff(dff, **kwargs)
+            m = manifest()
+            m["recordings"] = [{"path": str(dff), "frames": 1}]
+            scenario = {"name": "t", "frames": 1, "expect": {"projection_aspect": spec}}
+            return checker.check(scenario, m, SHUTDOWN)
+
+    def test_sixteen_nine_is_accepted(self):
+        result = self._run({"recording": "szene", "frame": 0, "value": 16 / 9},
+                           waagerecht=1.545456, senkrecht=2.747478)
+        self.assertTrue(result.passed, result.checks)
+
+    def test_a_wrong_aspect_fails(self):
+        result = self._run({"recording": "szene", "frame": 0, "value": 64 / 27},
+                           waagerecht=1.545456, senkrecht=2.747478)
+        self.assertFalse(result.passed)
+        self.assertIn("1.7777", result.checks[0][2])
+
+    def test_ultrawide_is_accepted(self):
+        result = self._run({"recording": "szene", "frame": 0, "value": 64 / 27},
+                           waagerecht=1.159092, senkrecht=2.747478)
+        self.assertTrue(result.passed, result.checks)
+
+    def test_an_orthographic_frame_has_no_aspect(self):
+        # Filme und HUD zeichnen orthografisch; daran laesst sich nichts messen.
+        result = self._run({"recording": "szene", "frame": 0, "value": 16 / 9},
+                           waagerecht=1.545456, senkrecht=2.747478, ortho=True)
+        self.assertFalse(result.passed)
+        self.assertIn("keine perspektivische", result.checks[0][2])
+
+    def test_a_missing_recording_is_a_failure_not_a_pass(self):
+        scenario = {"name": "t", "frames": 1,
+                    "expect": {"projection_aspect": {"recording": "fehlt", "value": 1.0}}}
         result = checker.check(scenario, manifest(), SHUTDOWN)
         self.assertFalse(result.passed)
         self.assertIn("fehlt", result.checks[0][2])

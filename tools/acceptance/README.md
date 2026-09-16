@@ -39,6 +39,7 @@ So steht in einem Szenario genau das, was wirklich zugesagt wird.
 | `smc_failed` | Zähler aus der `[staticrecomp] shutdown`-Zeile |
 | `max_fallback` | Obergrenze für Interpreter-Einzelschritte. **Nicht** für native Ausführung verwendbar: siehe [13-STATISCHER-KERN.md](../../docs/13-STATISCHER-KERN.md) |
 | `min_native_share` | Mindestanteil der Gasttakte, die im Rekompilat verbucht wurden: `cycles` geteilt durch `ticks` aus der Zählerzeile. Das ist die Zusage für native Ausführung ([16-RUECKWEG.md](../../docs/16-RUECKWEG.md)). Meldet die Laufzeit kein `ticks=`, fällt die Zusage durch, statt aus der Bildzahl geschätzt zu werden |
+| `projection_aspect` | Sichtverhältnis der Hauptkamera aus einer FIFO-Aufzeichnung der Eingabefolge. Genommen wird die perspektivische Projektion mit den meisten Zeichenbefehlen; orthografische (HUD, Filme) haben keines. Damit wird Widescreen an einer Zahl geprüft statt an einem Bild ([19-ULTRAWIDE.md](../../docs/19-ULTRAWIDE.md)) |
 | `audio_min_seconds` | Länge des DSP-Mitschnitts |
 | `audio_max_silence_share` | Anteil stiller Blöcke |
 | `audio_seconds_per_present` | Schranken für Ton je Bildausgabe. Enthält den Startversatz; die reine Steigung liefert `tools/audio rate` |
@@ -51,6 +52,7 @@ So steht in einem Szenario genau das, was wirklich zugesagt wird.
 | `boot.json` | Start bis Frame 600 ohne Eingabe. Prüft Arena- und Heapgrenzen gegen die in [10-KOPFLOSER-PRUEFSTAND.md](../../docs/10-KOPFLOSER-PRUEFSTAND.md) belegten Werte, dazu Ton und Zähler. |
 | `spielstart.json` | Eingabefolge bis in die Flugplatz-Sequenz (`fixtures/game-start.json`). Prüft unter anderem, dass `gpMarioAddress` (`0x8040E108`) auf ein Objekt in MEM1 zeigt. |
 | `nativ.json` | Kurzer Start, der **den Anteil nativer Ausführung zusagt**. Braucht den Rückweg (`STATICRECOMP_YIELD=1`, [16-RUECKWEG.md](../../docs/16-RUECKWEG.md)) und fällt ohne ihn ausdrücklich durch — sonst wäre die Zusage wertlos. |
+| `widescreen.json` | Eingabefolge bis zur 3D-Szene der Dateiauswahl, dort 20 Bilder als FIFO aufgezeichnet, und sagt das **Sichtverhältnis 1,777778** zu. Gilt für eine mit 16:9 gebackene Spielkopie; gegen eine 64:27-Kopie fällt sie ausdrücklich durch. |
 
 Am 2026-09-15 auf Linux mit dem gewöhnlichen Modul ausgeführt:
 
