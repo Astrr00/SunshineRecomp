@@ -7,8 +7,10 @@ gemessen, dass er **langsamer** ist als der Ersatz-JIT. Dieses Dokument sagt,
 woran das liegt — gemessen, nicht erschlossen.
 
 > **Nachtrag vom 2026-09-16** am Ende des Dokuments: Zwei der drei Vorschläge
-> aus „Zwei Hebel" sind gemessen und wirkungslos, einer ist berichtigt, und
-> die Leerlaufprüfung hat **9 % Bildrate** hergegeben.
+> aus „Zwei Hebel" sind gemessen und wirkungslos, einer ist berichtigt, die
+> Leerlaufprüfung hat **9 % Bildrate** hergegeben — und der grösste Posten ist
+> gefunden: **zwei Drittel aller Dispatches sind ein einziges `dcbf`** in
+> `DCFlushRange`, weil der Erzeuger danach unbedingt zurückkehrt.
 
 **Kurz:** Ein Dispatch kostet **173,5 Wirtszyklen** und führt dabei **9,2
 Gasttakte** aus. Das Modul gibt die Kontrolle also alle neun Gastbefehle an die
@@ -284,15 +286,85 @@ Dispatch zahlt eine Ladung daraus an praktisch zufälliger Stelle und einen
 indirekten Sprung, den kein Sprungvorhersager trifft. Das ist der Preis der
 Eigenschaft „jede Befehlsadresse ist ein Einsprungpunkt".
 
-### Was offen bleibt
+### Aufgelöst: zwei Drittel aller Dispatches sind ein einziges `dcbf`
 
-Ein Widerspruch ist nicht aufgelöst: 98 % der Rückkehren landen auf der
-Einsprungadresse, aber je Dispatch werden nur **9,2 Takte** verbucht. Ein
-Ausstieg über das Schleifenbudget müsste 256 verbuchen. Es sind also kurze
-Schleifen, die je Runde einmal abgeben — welcher Zweig des Erzeugers das tut,
-ist noch nicht belegt. Wer das klärt, findet vermutlich den größten
-verbliebenen Posten; `m_dispatch_samples` (`--collect-dispatch-samples`)
-liefert die heißen Adressen dafür.
+Der Widerspruch — 98 % der Rückkehren auf der Einsprungadresse, aber nur
+**9,2 verbuchte Takte** je Dispatch, während ein Ausstieg über das
+Schleifenbudget 256 verbuchen müsste — ist mit `STATICRECOMP_DISPATCH_SAMPLES=1`
+aufgelöst. Die Stichprobe (jeder 4.096. Dispatch, 300 Bilder):
+
+| Gastadresse | Stichproben | liegt in |
+|---|---|---|
+| **`0x803436B0`** | **32.384** | `DCFlushRange` (`0x8034368C`) |
+| `0x803487E0` | 1.421 | `__DVDInterruptHandler`-Umfeld |
+| `0x80343680` | 817 | `DCInvalidateRange` (`0x8034365C`) |
+
+Die erste Adresse ist **23-mal häufiger als die zweite**. Hochgerechnet sind
+das rund **132 Millionen von 197 Millionen Dispatches — zwei Drittel**, und
+sie stimmen mit den 132.653.100 gezählten `dcbf`-Hooks überein.
+
+Der erzeugte Code sagt, warum:
+
+```c
+label_803436AC:
+    ctx->pc = 0x803436ACu;
+    // 803436AC: dcbf    0, r3
+    ppc_fallback_instruction(ctx, 0x7C0018ACu, 0x803436ACu);
+    return;                                   // <-- hier endet der Dispatch
+
+label_803436B0:
+    ctx->downcount -= 2;
+    // 803436B0: addi    r3, r3, 32
+    ctx->gpr[3] = ctx->gpr[3] + (u32)(s32)(32);
+
+label_803436B4:
+    // 803436B4: bc    16, 0, 0x803436AC
+    ...
+            goto label_803436AC;              // <-- wird nie erreicht
+```
+
+`DCFlushRange` ist eine Schleife aus drei Befehlen: `dcbf`, `addi`, `bdnz`.
+Der Erzeuger behandelt `dcbf` im `default`-Zweig von
+`emit_instruction_with_range` (`DolRecomp/src/backend/emitter.c:1610`) — genauer
+in einem eigenen Fall für `DCBST`, `DCBF`, `DCBI` und `ICBI`, der
+`ppc_fallback_instruction` aufruft **und danach unbedingt zurückkehrt**. Der
+Rücksprung der Schleife wird deshalb nie im Modul genommen: Die Wirtsschleife
+tritt bei `0x803436B0` wieder ein, führt zwei Befehle aus, springt zurück auf
+`0x803436AC`, und das nächste `dcbf` steigt wieder aus.
+
+**Eine Runde dieser Schleife kostet damit einen vollen Wiedereintritt** —
+Sprungtabelle über 4.096 Fälle, indirekter Sprung, Wirtsschleife: gemessene
+173,5 Wirtszyklen für vier verbuchte Gasttakte.
+
+### Der nächste Schritt, beziffert
+
+`ppc_cache_control(CPUState*, u8 operation, u32 ea, u32 cia)` gibt es in
+DolRecomps Laufzeit bereits (`src/cpu/cpu.c:598`), und RecompCore bedient den
+Haken (`StaticRecompCore_Hooks.cpp`, `PPC_CACHE_DCBF`). Es fehlt allein der
+Zweig im C-Erzeuger, der ihn **ohne `return`** aufruft.
+
+Abschätzung, nicht gemessen: Zwei Drittel von 197 Millionen Dispatches mal
+173,5 Wirtszyklen sind rund 22,8 von 34,1 Milliarden Wirtszyklen. Blieben die
+`dcbf`-Runden im Modul, wäre der Lauf grob **zweimal bis zweieinhalbmal so
+schnell**.
+
+Was dabei zu klären ist, und warum es keine Fingerübung ist:
+
+1. Der Haken ruft bei abgeschaltetem Daten-Cache `InvalidateICacheLine(ea)`
+   auf. Eine Invalidierung kann die gerade laufende Kachel treffen. Genau
+   dagegen schützt heute das `return`. Wer es entfernt, muss dem Modul einen
+   Weg geben, das zu erfahren — sonst fällt die SMC-Wache aus, auf der die
+   Richtigkeitsaussage dieses Ports steht.
+2. `icbi` sollte weiterhin zurückkehren; nur `dcbf`, `dcbst` und `dcbi` sind
+   Kandidaten.
+3. Es ist eine Änderung an **DolRecomp**, dem dritten fremden Baum, und zieht
+   einen vollständigen Modulbau von rund 65 Minuten nach sich. Ein
+   Zwischenbau nur des Modul-Klebers genügt nicht: Der Zweig sitzt im
+   erzeugten Code jeder Kachel.
+
+**In dieser Sitzung nicht begonnen** — die Entscheidung gehört dem
+Auftraggeber, weil sie einen fremden Baum, die SMC-Wache und einen langen
+Bau berührt.
 
 ## Was das für das Ziel bedeutet
 
@@ -300,6 +372,11 @@ liefert die heißen Adressen dafür.
 nicht zu haben: Nativ ist derzeit siebenmal langsamer als Emulation. Die
 Ursache ist aber weder das Verfahren noch das Rekompilat an sich, sondern eine
 Struktureigenschaft — wie oft das Modul abgibt. Das ist behebbar.
+
+Der Nachtrag vom selben Tag beziffert das: **Zwei Drittel aller Abgaben sind
+ein einziger Befehl**, `dcbf` in `DCFlushRange`. Ein Zweig im C-Erzeuger, der
+ihn ohne `return` behandelt, wäre grob ein Faktor zwei bis zweieinhalb — und
+ist die einzige Änderung, die noch in dieser Grössenordnung liegt.
 
 **Nicht gemessen und hier nicht messbar:** wie sich das auf einer echten
 Grafikkarte und einem schnelleren Kern verhält. Alle Zahlen stammen von vier
