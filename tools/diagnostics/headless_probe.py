@@ -73,6 +73,9 @@ def main() -> int:
                         "des Frontends, mehrfach moeglich (etwa scaler=nearest). "
                         "Anders als --core-setting geht das an ModernGekkos "
                         "eigene Einstellungen, nicht an Dolphins Dolphin.ini.")
+    p.add_argument("--graphics", default="Null",
+                   help="Grafik-Backend der Laufzeit; Null zeichnet nichts. Vulkan rendert "
+                        "kopflos auf Lavapipe (docs/20, Schatten-EFB).")
     p.add_argument("--core-setting", action="append", default=[], metavar="SCHLUESSEL=WERT",
                    help="zusaetzliche Zeile im Abschnitt [Core] der Dolphin.ini, "
                         "mehrfach moeglich (etwa LargeEntryPointsMap=False). "
@@ -124,7 +127,7 @@ def main() -> int:
            "--user-dir", str(user), "--automation-dir", str(auto),
            # Ein in config.ini gesetzter Backend gewinnt ueber den kopflosen
            # Null-Backend; deshalb ausdruecklich auf der Befehlszeile.
-           "--graphics", "Null", "--audio", "Null"]
+           "--graphics", args.graphics, "--audio", "Null"]
     static = bool(args.module) and not args.jit
     if static:
         cmd += ["--module", str(args.module.resolve())]

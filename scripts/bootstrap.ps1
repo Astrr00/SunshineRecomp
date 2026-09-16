@@ -219,11 +219,15 @@ function Add-Patches {
             File = 'recompcore-leerlauf-zwischenspeicher.patch'
             Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
         }
-        # WP14 Schritt 1, Trockenlauf des GX-Befehlsstroms (docs/20): mit
-        # MODERNGEKKO_GX_DRYRUN=1 wird jedes Bild mitgeschrieben und nach dem
-        # Praesentieren ein zweites Mal dekodiert, ohne zu zeichnen und mit
-        # Riegel vor den elf BP-Registern mit gastseitiger Wirkung. Gemessen:
-        # Tonstrom zu 100 Prozent abtastwertgleich. Ohne die Variable inaktiv.
+        # WP14 Schritte 1 und 2 (docs/20): mit MODERNGEKKO_GX_DRYRUN=1 wird
+        # jedes Bild mitgeschrieben und nach dem Praesentieren ein zweites Mal
+        # dekodiert, ohne zu zeichnen; mit =2 zeichnet der zweite Durchlauf in
+        # einen Schatten-EFB (eigenes Farb-, Tiefen- und Konvertierungspaar,
+        # per Zeigertausch). Riegel vor den elf BP-Registern mit gastseitiger
+        # Wirkung, Bounding Box und Pixelzaehler aus, CP/XF/BP-Stand vom
+        # Bildanfang wiederhergestellt. Gemessen ueber die ganze Eingabefolge:
+        # jedes Byte erneut dekodiert, Vertices und Zeichenaufrufe identisch,
+        # Boot-Tonstrom abtastwertgleich. Ohne die Variable inaktiv.
         @{
             File = 'recompcore-gx-trockenlauf.patch'
             Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'

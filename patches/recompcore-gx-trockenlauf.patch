@@ -32,18 +32,134 @@
    FrameDumper.h
    FrameDumpFFMpeg.h
    FreeLookCamera.cpp
+--- a/Source/Core/VideoCommon/FramebufferManager.cpp
++++ b/Source/Core/VideoCommon/FramebufferManager.cpp
+@@ -42,6 +42,12 @@
+   DestroyConversionPipelines();
+   DestroyReadbackPipelines();
+   DestroyReadbackFramebuffer();
++  // Der Schatten wird bei Bedarf in der neuen Groesse angelegt.
++  m_shadow_convert_framebuffer.reset();
++  m_shadow_framebuffer.reset();
++  m_shadow_depth_texture.reset();
++  m_shadow_convert_color_texture.reset();
++  m_shadow_color_texture.reset();
+   DestroyEFBFramebuffer();
+ }
+ 
+@@ -316,6 +322,56 @@
+   g_gfx->SetFramebuffer(m_efb_framebuffer.get());
+ }
+ 
++void FramebufferManager::SwapInShadow()
++{
++  if (m_shadow_active)
++    return;
++  const u32 width = m_efb_color_texture->GetWidth();
++  const u32 height = m_efb_color_texture->GetHeight();
++  if (!m_shadow_color_texture || m_shadow_color_texture->GetWidth() != width ||
++      m_shadow_color_texture->GetHeight() != height)
++  {
++    const TextureConfig color_config = GetEFBColorTextureConfig(width, height);
++    const TextureConfig depth_config = GetEFBDepthTextureConfig(width, height);
++    m_shadow_color_texture = g_gfx->CreateTexture(color_config, "Shadow EFB color texture");
++    m_shadow_convert_color_texture =
++        g_gfx->CreateTexture(color_config, "Shadow EFB convert color texture");
++    m_shadow_depth_texture = g_gfx->CreateTexture(depth_config, "Shadow EFB depth texture");
++    if (!m_shadow_color_texture || !m_shadow_convert_color_texture || !m_shadow_depth_texture)
++      return;
++    m_shadow_framebuffer =
++        g_gfx->CreateFramebuffer(m_shadow_color_texture.get(), m_shadow_depth_texture.get());
++    m_shadow_convert_framebuffer = g_gfx->CreateFramebuffer(m_shadow_convert_color_texture.get(),
++                                                            m_shadow_depth_texture.get());
++    if (!m_shadow_framebuffer || !m_shadow_convert_framebuffer)
++      return;
++  }
++  std::swap(m_efb_color_texture, m_shadow_color_texture);
++  std::swap(m_efb_convert_color_texture, m_shadow_convert_color_texture);
++  std::swap(m_efb_depth_texture, m_shadow_depth_texture);
++  std::swap(m_efb_framebuffer, m_shadow_framebuffer);
++  std::swap(m_efb_convert_framebuffer, m_shadow_convert_framebuffer);
++  m_shadow_active = true;
++  BindEFBFramebuffer();
++  // Der Schatten beginnt leer -- die EFB-Kopie mit Loeschen, die das Bild
++  // sonst einleitet, ist im zweiten Durchlauf gesperrt.
++  ClearEFB(MathUtil::Rectangle<int>(0, 0, EFB_WIDTH, EFB_HEIGHT), true, true, true, 0,
++           0xFFFFFF, bpmem.zcontrol.pixel_format);
++}
++
++void FramebufferManager::SwapOutShadow()
++{
++  if (!m_shadow_active)
++    return;
++  std::swap(m_efb_color_texture, m_shadow_color_texture);
++  std::swap(m_efb_convert_color_texture, m_shadow_convert_color_texture);
++  std::swap(m_efb_depth_texture, m_shadow_depth_texture);
++  std::swap(m_efb_framebuffer, m_shadow_framebuffer);
++  std::swap(m_efb_convert_framebuffer, m_shadow_convert_framebuffer);
++  m_shadow_active = false;
++  BindEFBFramebuffer();
++}
++
+ AbstractTexture* FramebufferManager::ResolveEFBColorTexture(const MathUtil::Rectangle<int>& region)
+ {
+   // Return the normal EFB texture if multisampling is off.
+--- a/Source/Core/VideoCommon/FramebufferManager.h
++++ b/Source/Core/VideoCommon/FramebufferManager.h
+@@ -96,6 +96,15 @@
+   // This is virtual, because D3D has both normalized and integer framebuffers.
+   void BindEFBFramebuffer();
+ 
++  // Schatten-EFB (WP14 Schritt 2, docs/20): ein eigenes Farb-, Tiefen- und
++  // Konvertierungspaar, das fuer die Dauer des zweiten Durchlaufs an die
++  // Stelle des EFB tritt. Getauscht werden die Zeiger, damit jeder Nutzer --
++  // Zeichnen, Loeschen, Pixelformatwechsel, EFB-Kopien -- ohne Aenderung im
++  // Schatten landet. Der eigentliche EFB bleibt unberuehrt.
++  void SwapInShadow();
++  void SwapOutShadow();
++  bool IsShadowActive() const { return m_shadow_active; }
++
+   // Resolve color/depth textures to a non-msaa texture, and return it.
+   AbstractTexture* ResolveEFBColorTexture(const MathUtil::Rectangle<int>& region);
+   AbstractTexture* ResolveEFBDepthTexture(const MathUtil::Rectangle<int>& region,
+@@ -205,6 +214,13 @@
+ 
+   std::unique_ptr<AbstractFramebuffer> m_efb_framebuffer;
+   std::unique_ptr<AbstractFramebuffer> m_efb_convert_framebuffer;
++  // Schatten-EFB (siehe SwapInShadow)
++  std::unique_ptr<AbstractTexture> m_shadow_color_texture;
++  std::unique_ptr<AbstractTexture> m_shadow_convert_color_texture;
++  std::unique_ptr<AbstractTexture> m_shadow_depth_texture;
++  std::unique_ptr<AbstractFramebuffer> m_shadow_framebuffer;
++  std::unique_ptr<AbstractFramebuffer> m_shadow_convert_framebuffer;
++  bool m_shadow_active = false;
+   std::unique_ptr<AbstractFramebuffer> m_efb_color_resolve_framebuffer;
+   std::unique_ptr<AbstractFramebuffer> m_efb_depth_resolve_framebuffer;
+   std::unique_ptr<AbstractPipeline> m_efb_color_resolve_pipeline;
 --- a/Source/Core/VideoCommon/GXDryRun.cpp
 +++ b/Source/Core/VideoCommon/GXDryRun.cpp
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,222 @@
 +#include "VideoCommon/GXDryRun.h"
 +
 +#include <cstdio>
 +#include <cstdlib>
++#include <cstring>
++#include <string>
 +
 +#include "VideoCommon/DataReader.h"
 +#include "Common/HookableEvent.h"
 +#include "Core/System.h"
++#include "VideoCommon/AbstractTexture.h"
 +#include "VideoCommon/BPMemory.h"
++#include "VideoCommon/BoundingBox.h"
++#include "VideoCommon/FramebufferManager.h"
++#include "VideoCommon/CPMemory.h"
++#include "VideoCommon/GeometryShaderManager.h"
++#include "VideoCommon/PixelShaderManager.h"
++#include "VideoCommon/VertexLoaderManager.h"
++#include "VideoCommon/VertexManagerBase.h"
++#include "VideoCommon/XFMemory.h"
++#include "VideoCommon/XFStateManager.h"
 +#include "VideoCommon/OpcodeDecoding.h"
 +#include "VideoCommon/VideoEvents.h"
 +#include "VideoCommon/VideoEvents.h"
@@ -52,6 +168,7 @@
 +{
 +bool g_active = false;
 +bool g_capture = false;
++bool g_no_draw = true;
 +
 +namespace
 +{
@@ -61,7 +178,61 @@
 +u64 s_bytes = 0;             // mitgeschriebene Bytes insgesamt
 +u64 s_blocked_bp = 0;        // gesperrte BP-Schreibvorgaenge im zweiten Durchlauf
 +u64 s_decoded_bytes = 0;     // im zweiten Durchlauf dekodierte Bytes
++u64 s_vertices = 0;          // im zweiten Durchlauf geladene Vertices
++u64 s_vertices_first = 0;    // im ersten Durchlauf geladene Vertices
++u64 s_draws = 0;             // Zeichenaufrufe im zweiten Durchlauf
++u64 s_draws_first = 0;       // Zeichenaufrufe im ersten Durchlauf
++u64 s_shadow_dumps = 0;      // gespeicherte Schattenbilder
++u64 s_short_frames = 0;      // zweite Durchlaeufe, die nicht alle Bytes dekodierten
++u64 s_first_short = 0;       // erster solcher Durchlauf (1-basiert), 0 = keiner
++std::string s_dump_dir;      // MODERNGEKKO_GX_DRYRUN_DUMP
++
++// Registerstand am Anfang der Mitschrift. Der Strom eines Bildes setzt nicht
++// jedes Register neu; was er vom Vorbild erbt (etwa Vertexformat und
++// -beschreibung), muss der zweite Durchlauf ebenso erben -- sonst liest er
++// die Zeichenbefehle mit falscher Vertexgroesse und laeuft versetzt (gemessen:
++// 15 von 2.403 Bildern, docs/20).
++struct Snapshot
++{
++  CPState cp;
++  XFMemory xf;
++  BPMemory bp;
++};
++Snapshot s_start;   // Stand am Anfang der laufenden Mitschrift
++Snapshot s_end;     // Stand am Ende, wird nach dem zweiten Durchlauf zurueckgesetzt
++
++void Take(Snapshot* into)
++{
++  std::memcpy(&into->cp, &g_main_cp_state, sizeof(CPState));
++  std::memcpy(&into->xf, &xfmem, sizeof(XFMemory));
++  std::memcpy(&into->bp, &bpmem, sizeof(BPMemory));
++}
++
++void Apply(const Snapshot& from)
++{
++  auto& system = Core::System::GetInstance();
++  std::memcpy(&g_main_cp_state, &from.cp, sizeof(CPState));
++  std::memcpy(&xfmem, &from.xf, sizeof(XFMemory));
++  std::memcpy(&bpmem, &from.bp, sizeof(BPMemory));
++  // Wie VideoCommon_DoState nach dem Laden eines Sicherungsstands.
++  VertexLoaderManager::MarkAllDirty();
++  system.GetPixelShaderManager().Dirty();
++  system.GetGeometryShaderManager().Dirty();
++  system.GetXFStateManager().InvalidateXFRange(0, 0x1000);
++  system.GetXFStateManager().SetProjectionChanged();
++  system.GetPixelShaderManager().SetViewportChanged();
++}
 +}  // namespace
++
++void CountVertices(int count)
++{
++  (g_active ? s_vertices : s_vertices_first) += static_cast<u64>(count);
++}
++
++void CountDraw()
++{
++  ++(g_active ? s_draws : s_draws_first);
++}
 +
 +bool BlocksBPRegister(u8 address)
 +{
@@ -98,25 +269,73 @@
 +    return;
 +  // Der zweite Durchlauf laeuft auf demselben Faden wie der erste, nach dem
 +  // Praesentieren. Die Mitschrift enthaelt Display-Listen bereits aufgeloest.
++  auto& system = Core::System::GetInstance();
++  // Nichts, was der Gast liest, darf sich aendern: die Bounding Box wird im
++  // Pixelshader fortgeschrieben, die Pixelzaehler beim Zeichnen.
++  const bool bbox_was_enabled = g_bounding_box && g_bounding_box->IsEnabled();
++  if (bbox_was_enabled)
++    g_bounding_box->Disable(system.GetPixelShaderManager());
++  if (!g_no_draw)
++    g_framebuffer_manager->SwapInShadow();
++  Take(&s_end);
++  Apply(s_start);
 +  g_active = true;
 +  u32 cycles = 0;
 +  DataReader reader(s_buffer.data(), s_buffer.data() + s_buffer.size());
 +  const u8* end = OpcodeDecoder::RunFifo<false>(reader, &cycles);
-+  s_decoded_bytes += static_cast<u64>(end - s_buffer.data());
++  const u64 decoded = static_cast<u64>(end - s_buffer.data());
++  s_decoded_bytes += decoded;
++  if (decoded != s_buffer.size())
++  {
++    ++s_short_frames;
++    if (s_first_short == 0)
++      s_first_short = s_frames + 1;
++    std::fprintf(stderr, "[gx-dryrun] Durchlauf %llu: %llu von %llu Bytes dekodiert\n",
++                 (unsigned long long)(s_frames + 1), (unsigned long long)decoded,
++                 (unsigned long long)s_buffer.size());
++  }
++  g_vertex_manager->Flush();
 +  g_active = false;
++  if (!g_no_draw)
++  {
++    if (!s_dump_dir.empty() && (s_frames % 60) == 0)
++    {
++      // Der Schatten ist gerade der aktive EFB; sein Farbbild abspeichern.
++      if (g_framebuffer_manager->GetEFBColorTexture()->Save(
++              s_dump_dir + "/schatten_" + std::to_string(s_frames) + ".png", 0))
++        ++s_shadow_dumps;
++      // Zum Vergleich der eigentliche EFB zu diesem Zeitpunkt (nach dem Tausch
++      // ist er der Schatten-Zeiger).
++      g_framebuffer_manager->SwapOutShadow();
++      g_framebuffer_manager->GetEFBColorTexture()->Save(
++          s_dump_dir + "/efb_" + std::to_string(s_frames) + ".png", 0);
++      g_framebuffer_manager->SwapInShadow();
++    }
++    g_framebuffer_manager->SwapOutShadow();
++  }
++  Apply(s_end);
++  if (bbox_was_enabled)
++    g_bounding_box->Enable(system.GetPixelShaderManager());
 +  ++s_frames;
 +  s_buffer.clear();
++  Take(&s_start);  // die naechste Mitschrift beginnt hier
 +}
 +
 +void Initialize()
 +{
-+  g_capture = std::getenv("MODERNGEKKO_GX_DRYRUN") != nullptr;
++  const char* stufe = std::getenv("MODERNGEKKO_GX_DRYRUN");
++  g_capture = stufe != nullptr;
++  g_no_draw = !(stufe && stufe[0] == '2');
++  const char* dump = std::getenv("MODERNGEKKO_GX_DRYRUN_DUMP");
++  s_dump_dir = dump ? dump : "";
 +  g_active = false;
 +  s_buffer.clear();
-+  s_frames = s_bytes = s_blocked_bp = s_decoded_bytes = 0;
++  s_frames = s_bytes = s_blocked_bp = s_decoded_bytes = s_vertices = s_shadow_dumps = 0;
++  s_vertices_first = s_draws = s_draws_first = s_short_frames = s_first_short = 0;
 +  if (!g_capture)
 +    return;
 +  s_buffer.reserve(4u << 20);
++  Take(&s_start);
 +  s_after_present = Core::System::GetInstance().GetVideoEvents().after_present_event.Register(
 +      SecondPass);
 +}
@@ -127,9 +346,14 @@
 +  if (g_capture)
 +  {
 +    std::fprintf(stderr,
-+                 "[gx-dryrun] frames=%llu bytes=%llu decoded=%llu blocked_bp=%llu\n",
-+                 (unsigned long long)s_frames, (unsigned long long)s_bytes,
-+                 (unsigned long long)s_decoded_bytes, (unsigned long long)s_blocked_bp);
++                 "[gx-dryrun] stufe=%d frames=%llu bytes=%llu decoded=%llu blocked_bp=%llu "
++                 "vertices=%llu/%llu draws=%llu/%llu schattenbilder=%llu kurz=%llu/erster=%llu\n",
++                 g_no_draw ? 1 : 2, (unsigned long long)s_frames, (unsigned long long)s_bytes,
++                 (unsigned long long)s_decoded_bytes, (unsigned long long)s_blocked_bp,
++                 (unsigned long long)s_vertices, (unsigned long long)s_vertices_first,
++                 (unsigned long long)s_draws, (unsigned long long)s_draws_first,
++                 (unsigned long long)s_shadow_dumps, (unsigned long long)s_short_frames,
++                 (unsigned long long)s_first_short);
 +  }
 +  g_capture = false;
 +  g_active = false;
@@ -139,7 +363,7 @@
 +}  // namespace GXDryRun
 --- a/Source/Core/VideoCommon/GXDryRun.h
 +++ b/Source/Core/VideoCommon/GXDryRun.h
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,41 @@
 +// Trockenlauf des GX-Befehlsstroms (WP14, Schritt 1; docs/20-VARIABLE-BILDRATE.md).
 +//
 +// Mit MODERNGEKKO_GX_DRYRUN=1 wird der Befehlsstrom jedes Bildes mitgeschrieben
@@ -159,8 +383,15 @@
 +// Waehrend des zweiten Durchlaufs wahr: BPWritten sperrt die elf Register mit
 +// gastseitiger Wirkung, der Vertexlader zeichnet nichts.
 +extern bool g_active;
-+// Mitschrift eingeschaltet (Umgebungsvariable).
++// Mitschrift eingeschaltet (Umgebungsvariable MODERNGEKKO_GX_DRYRUN=1 oder 2).
 +extern bool g_capture;
++// Stufe 1: nichts zeichnen (cullall). Stufe 2: in den Schatten-EFB zeichnen.
++extern bool g_no_draw;
++
++// Vom Vertexlader im zweiten Durchlauf gerufen.
++void CountVertices(int count);
++// Vom Vertexmanager je Zeichenaufruf gerufen (beide Durchlaeufe).
++void CountDraw();
 +
 +void Initialize();
 +void Shutdown();
@@ -214,11 +445,50 @@
      // They still need to go through vertex loading, because we need to calculate a zfreeze
      // reference slope.
 -    const bool cullall = (bpmem.genMode.cull_mode == CullMode::All &&
-+    const bool cullall = GXDryRun::g_active ||
++    const bool cullall = (GXDryRun::g_active && GXDryRun::g_no_draw) ||
 +                         (bpmem.genMode.cull_mode == CullMode::All &&
                            primitive < OpcodeDecoder::Primitive::GX_DRAW_LINES);
  
      const int stride = loader->m_native_vtx_decl.stride;
+@@ -453,6 +456,8 @@
+                                                                   cullall || can_cpu_cull);
+ 
+       const int num_loaded = loader->RunVertices(src, dst.GetPointer(), run);
++      if (GXDryRun::g_capture)
++        GXDryRun::CountVertices(num_loaded);
+       src += loader->m_vertex_size * max_vertices;
+ 
+       if (can_cpu_cull && !cullall)
+--- a/Source/Core/VideoCommon/VertexManagerBase.cpp
++++ b/Source/Core/VideoCommon/VertexManagerBase.cpp
+@@ -22,6 +22,7 @@
+ #include "VideoCommon/AbstractGfx.h"
+ #include "VideoCommon/BPMemory.h"
+ #include "VideoCommon/BoundingBox.h"
++#include "VideoCommon/GXDryRun.h"
+ #include "VideoCommon/DataReader.h"
+ #include "VideoCommon/FramebufferManager.h"
+ #include "VideoCommon/GeometryShaderManager.h"
+@@ -1087,15 +1088,17 @@
+     base_vertex <<= 2;
+   }
+ 
+-  if (PerfQueryBase::ShouldEmulate())
++  if (PerfQueryBase::ShouldEmulate() && !GXDryRun::g_active)
+     g_perf_query->EnableQuery(bpmem.zcontrol.early_ztest ? PQG_ZCOMP_ZCOMPLOC : PQG_ZCOMP);
+ 
++  if (GXDryRun::g_capture)
++    GXDryRun::CountDraw();
+   DrawCurrentBatch(base_index, m_index_generator.GetIndexLen(), base_vertex);
+ 
+   // Track the total emulated state draws
+   INCSTAT(g_stats.this_frame.num_draw_calls);
+ 
+-  if (PerfQueryBase::ShouldEmulate())
++  if (PerfQueryBase::ShouldEmulate() && !GXDryRun::g_active)
+     g_perf_query->DisableQuery(bpmem.zcontrol.early_ztest ? PQG_ZCOMP_ZCOMPLOC : PQG_ZCOMP);
+ }
+ 
 --- a/Source/Core/VideoCommon/VideoBackendBase.cpp
 +++ b/Source/Core/VideoCommon/VideoBackendBase.cpp
 @@ -3,6 +3,8 @@

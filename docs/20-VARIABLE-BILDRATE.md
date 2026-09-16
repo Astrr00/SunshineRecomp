@@ -8,8 +8,8 @@ gerendert wird entkoppelt. Der Vorversuch WP13 ist abgeschlossen
 ([11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md)); er arbeitet **offline** auf
 DFF-Dateien. Dieses Dokument ist der Plan, das in die **Laufzeit** zu bringen.
 
-**Stand 2026-09-16, später am Tag: Schritt 1 ist gebaut und gemessen**
-(Abschnitt „Schritt 1: gemessen" unten). Alles Weitere ist ein Entwurf mit
+**Stand 2026-09-16, später am Tag: Schritte 1 und 2 sind gebaut und gemessen**
+(Abschnitte „Schritt 1: gemessen" und „Schritt 2" unten). Alles Weitere ist ein Entwurf mit
 Fundstellen, keine Messung — außer dort, wo ausdrücklich „gemessen" steht.
 
 ## Zwei Befunde, die bestehende Messungen berichtigen
@@ -155,16 +155,68 @@ Abtastwertgleich: die ersten 12.165 s (100.0% der kuerzeren Aufnahme),
                   insgesamt 100.00% gleiche Abtastwerte
 ```
 
-**Die Frage von Schritt 1 ist beantwortet: Ja.** Der Strom lässt sich
-vollständig ein zweites Mal ausführen — jedes mitgeschriebene Byte wurde
-erneut dekodiert —, ohne dass Tonstrom oder Zähler sich ändern. Die 1.111
-gesperrten Schreibvorgänge sind der Beleg, dass der Riegel gebraucht wird:
-gut drei je Bild, darunter die XFB-Kopie und die PE-Token, die sonst
-Interrupts ausgelöst hätten.
+**Die Frage von Schritt 1 ist beantwortet: Ja — mit einer Bedingung, die
+erst die ganze Eingabefolge gezeigt hat.** Über den Boot allein wurde jedes
+Byte erneut dekodiert. Über die 2.400 Bilder bis in die Flugplatz-Sequenz
+aber blieben zunächst **15 von 2.403** zweite Durchläufe vorzeitig stehen
+(der erste bei Bild 861: 5.553 von 327.343 Bytes), einer davon mit einer
+Zusicherung im Dekodierer (`GX_LOAD_XF_REG` mit unsinniger Länge). Der
+Grund: Der Strom eines Bildes setzt nicht jedes Register neu, sondern erbt
+vom Vorbild — etwa Vertexformat und -beschreibung. Der zweite Durchlauf
+begann mit dem Stand vom Bild*ende*; wo das Bild diese Register unterwegs
+geändert hatte, las er die ersten Zeichenbefehle mit falscher Vertexgröße und
+lief versetzt.
 
-Was Schritt 1 nicht zeigt: Zeitkosten (ein zweiter Durchlauf ohne Zeichnen
-ist billig, 0,1 s über 300 Bilder liegen in der Streuung) und Bilder. Beides
-kommt mit Schritt 2.
+Deshalb sichert die Mitschrift jetzt den CP-, XF- und BP-Stand an ihrem
+Anfang und stellt ihn vor dem zweiten Durchlauf wieder her; danach kommt der
+Endstand zurück, mit denselben Markierungen wie nach einem Sicherungsstand
+(`VideoCommon_DoState`). Damit über die ganze Eingabefolge:
+
+| | erster Durchlauf | zweiter Durchlauf |
+|---|---|---|
+| Bytes | 704.218.560 | **704.205.153** (Rest: das letzte, beim Beenden offene Bild) |
+| vorzeitig beendete Durchläufe | — | **0** von 2.407 |
+| geladene Vertices | 40.453.287 | **40.453.287** |
+| gesperrte BP-Schreibvorgänge | — | 25.808 |
+| `gpMarioAddress` am Ende | `0x80E9AD44` | `0x80E9AD44` |
+
+Der zweite Durchlauf lädt exakt so viele Vertices wie der erste. Die
+gesperrten Schreibvorgänge — gut zehn je Bild, darunter XFB-Kopie und
+PE-Token — sind der Beleg, dass der Riegel gebraucht wird. Ein Maß, das
+hier **nicht** taugt: der Tonvergleich über die Eingabefolge. Die Eingaben
+werden je Bildzähler per Datei zugestellt, mit Zustellungsjitter; zwei
+Läufe derselben Folge weichen im Ton nach der ersten Eingabe ohnehin
+voneinander ab. Abtastwertgleich ist nur der eingabefreie Boot zu erwarten,
+und der war es (oben).
+
+## Schritt 2: gebaut, gemessen, Bild steht aus
+
+`MODERNGEKKO_GX_DRYRUN=2`: Der zweite Durchlauf zeichnet wirklich. Dafür
+hält `FramebufferManager` einen **Schatten-EFB** — ein eigenes Farb-,
+Tiefen- und Konvertierungspaar in EFB-Größe —, das für die Dauer des
+Durchlaufs per Zeigertausch (`SwapInShadow`/`SwapOutShadow`) an die Stelle
+des EFB tritt. Jeder Nutzer des EFB, ob Zeichnen, Löschen oder
+Pixelformatwechsel, landet dadurch ohne eigene Änderung im Schatten; der
+eigentliche EFB bleibt unberührt. Der Schatten wird beim Eintausch geleert,
+weil die EFB-Kopie mit Löschen, die ein Bild sonst einleitet, gesperrt ist.
+Zwei weitere Dinge, die der Gast liest, sind im zweiten Durchlauf aus: die
+Bounding Box (wird im Pixelshader fortgeschrieben) und die Pixelzähler.
+
+Über die ganze Eingabefolge, Null-Grafik:
+
+| | erster Durchlauf | zweiter Durchlauf |
+|---|---|---|
+| Zeichenaufrufe | 416.274 | **416.268** |
+| geladene Vertices | 40.475.202 | 40.473.826 |
+| vorzeitig beendete Durchläufe | — | 0 von 2.403 |
+| `gpMarioAddress` am Ende | `0x80E9AD44` | `0x80E9AD44` |
+
+Die Differenzen sind das letzte, beim Beenden offene Bild. **Was noch
+aussteht, ist das Bild selbst:** Mit dem Null-Backend, das die kopflosen
+Läufe benutzen, wird nichts gerastert — alle Schattenbilder sind schwarz,
+und ebenso der eigentliche EFB, weil er zum Zeitpunkt des Präsentierens
+schon gelöscht ist. Der Lauf auf Vulkan/Lavapipe (`headless_probe
+--graphics Vulkan`, neu) muss das Schattenbild zeigen; er läuft.
 
 ## Was vorab zu prüfen war
 
