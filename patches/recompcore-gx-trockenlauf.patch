@@ -36,6 +36,19 @@
      {
        // Check if we are to copy from the EFB or draw to the XFB
        if (PE_copy.copy_to_xfb == 0)
+@@ -374,8 +387,10 @@
+       }
+     }
+ 
+-    // Clear the rectangular region after copying it.
+-    if (PE_copy.clear)
++    // Clear the rectangular region after copying it. Trockenlauf Stufe 1
++    // (nichts zeichnen) laesst auch das Loeschen aus: es traefe den EFB des
++    // laufenden Bildes, weil dort kein Schatten eingetauscht ist.
++    if (PE_copy.clear && !(GXDryRun::g_active && GXDryRun::g_no_draw))
+     {
+       const bool color_enable = bpmem.blendmode.color_update != 0;
+       const bool alpha_enable = bpmem.blendmode.alpha_update != 0;
 --- a/Source/Core/VideoCommon/CMakeLists.txt
 +++ b/Source/Core/VideoCommon/CMakeLists.txt
 @@ -66,6 +66,8 @@
@@ -153,7 +166,7 @@
    std::unique_ptr<AbstractPipeline> m_efb_color_resolve_pipeline;
 --- a/Source/Core/VideoCommon/GXDryRun.cpp
 +++ b/Source/Core/VideoCommon/GXDryRun.cpp
-@@ -0,0 +1,541 @@
+@@ -0,0 +1,583 @@
 +#include "VideoCommon/GXDryRun.h"
 +
 +#include <cstdio>
@@ -162,7 +175,9 @@
 +#include <string>
 +
 +#include "VideoCommon/DataReader.h"
++#include "Common/ChunkFile.h"
 +#include "Common/HookableEvent.h"
++#include "VideoCommon/BPStructs.h"
 +#include "Core/System.h"
 +#include "VideoCommon/AbstractTexture.h"
 +#include "VideoCommon/BPMemory.h"
@@ -173,6 +188,7 @@
 +#include "VideoCommon/PixelShaderManager.h"
 +#include "VideoCommon/VertexLoaderManager.h"
 +#include "VideoCommon/VertexManagerBase.h"
++#include "VideoCommon/VertexShaderManager.h"
 +#include "VideoCommon/XFMemory.h"
 +#include "VideoCommon/XFStateManager.h"
 +#include "VideoCommon/XFStructs.h"
@@ -347,7 +363,31 @@
 +  CPState cp;
 +  XFMemory xf;
 +  BPMemory bp;
++  // Die abgeleiteten Zustaende der Shader-Verwalter (Konstantenpuffer und
++  // Schmutzmarken), serialisiert wie in einem Sicherungsstand. Ein blosses
++  // Neu-Markieren reichte nicht: InvalidateXFRange(0, 0x1000) rechnet den
++  // Anfang der Nachtransformations- und Lichtbereiche absolut statt relativ
++  // (XFStateManager.cpp) -- SetConstants kopierte dann hinter den
++  // Konstantenpuffer, gefunden mit valgrind (docs/20).
++  std::vector<u8> managers;
 +};
++
++void DoManagers(PointerWrap& p)
++{
++  auto& system = Core::System::GetInstance();
++  system.GetPixelShaderManager().DoState(p);
++  system.GetVertexShaderManager().DoState(p);
++  system.GetGeometryShaderManager().DoState(p);
++  system.GetXFStateManager().DoState(p);
++}
++
++void CopySnapshot(Snapshot* to, const Snapshot& from)
++{
++  std::memcpy(&to->cp, &from.cp, sizeof(CPState));
++  std::memcpy(&to->xf, &from.xf, sizeof(XFMemory));
++  std::memcpy(&to->bp, &from.bp, sizeof(BPMemory));
++  to->managers = from.managers;
++}
 +Snapshot s_start;   // Stand am Anfang der laufenden Mitschrift
 +Snapshot s_end;     // Stand am Ende, wird nach dem zweiten Durchlauf zurueckgesetzt
 +Snapshot s_frame_start;  // Stand am Anfang des abgeschlossenen Bildes
@@ -357,21 +397,31 @@
 +  std::memcpy(&into->cp, &g_main_cp_state, sizeof(CPState));
 +  std::memcpy(&into->xf, &xfmem, sizeof(XFMemory));
 +  std::memcpy(&into->bp, &bpmem, sizeof(BPMemory));
++  // Erst messen, dann schreiben -- wie State::SaveToBuffer.
++  static u8 s_measure_base;
++  u8* cursor = &s_measure_base;
++  PointerWrap measure(&cursor, 0, PointerWrap::Mode::Measure);
++  DoManagers(measure);
++  into->managers.resize(static_cast<size_t>(cursor - &s_measure_base));
++  u8* out = into->managers.data();
++  PointerWrap write(&out, into->managers.size(), PointerWrap::Mode::Write);
++  DoManagers(write);
 +}
 +
 +void Apply(const Snapshot& from)
 +{
-+  auto& system = Core::System::GetInstance();
 +  std::memcpy(&g_main_cp_state, &from.cp, sizeof(CPState));
 +  std::memcpy(&xfmem, &from.xf, sizeof(XFMemory));
 +  std::memcpy(&bpmem, &from.bp, sizeof(BPMemory));
++  CopyPreprocessCPStateFromMain();
++  // Die Verwalter lesen ihren Stand zurueck und markieren sich schmutzig.
++  std::vector<u8> copy = from.managers;
++  u8* in = copy.data();
++  PointerWrap read(&in, copy.size(), PointerWrap::Mode::Read);
++  DoManagers(read);
 +  // Wie VideoCommon_DoState nach dem Laden eines Sicherungsstands.
++  BPReload();
 +  VertexLoaderManager::MarkAllDirty();
-+  system.GetPixelShaderManager().Dirty();
-+  system.GetGeometryShaderManager().Dirty();
-+  system.GetXFStateManager().InvalidateXFRange(0, 0x1000);
-+  system.GetXFStateManager().SetProjectionChanged();
-+  system.GetPixelShaderManager().SetViewportChanged();
 +}
 +}  // namespace
 +
@@ -543,7 +593,7 @@
 +  s_buffer.clear();
 +  s_frame_ready = true;
 +  s_frame_index = index;
-+  std::memcpy(&s_frame_start, &s_start, sizeof(Snapshot));
++  CopySnapshot(&s_frame_start, s_start);
 +  Take(&s_start);  // die naechste Mitschrift beginnt mit der XFB-Kopie selbst
 +  if (g_interpolate)
 +  {
@@ -557,6 +607,11 @@
 +  if (!s_frame_ready)
 +    return;
 +  s_frame_ready = false;
++  // Der erste Durchlauf hat beim Praesentieren meist schon Vertices des
++  // naechsten Bildes gesammelt, aber noch nicht gezeichnet. Die muessen
++  // jetzt in den eigentlichen EFB -- sonst landen sie im Schatten (Stufe 2
++  // und 3) oder werden mit dem cullall-Stapel verworfen (Stufe 1).
++  g_vertex_manager->Flush();
 +  // Der zweite Durchlauf laeuft auf demselben Faden wie der erste, nach dem
 +  // Praesentieren. Die Mitschrift enthaelt Display-Listen bereits aufgeloest.
 +  auto& system = Core::System::GetInstance();

@@ -293,27 +293,30 @@ Bild. Die Sperrliste hat damit zehn Register; die Kopie ist der elfte Fall
 mit eigener Behandlung. Das Vergleichsbild `efb_<n>.png` entsteht seither
 an der Bildgrenze, nicht mehr beim Präsentieren; `<n>` zählt XFB-Kopien.
 
-Mit dieser Grenze, Stufe 3 aktiv, ganze Eingabefolge auf Vulkan/Lavapipe:
-2.084 abgeschlossene Bilder bei 2.082 Präsentierungen, keines verworfen
-(zwei Kopien zwischen zwei Präsentierungen zählt der Zähler `verworfen`).
+Mit dieser Grenze, Stufe 3 aktiv, ganze Eingabefolge auf Vulkan/Lavapipe
+(Stand nach allen Korrekturen dieses Abschnitts und des nächsten): 2.083
+abgeschlossene Bilder bei 2.081 Präsentierungen, keines verworfen (zwei
+Kopien zwischen zwei Präsentierungen zählt der Zähler `verworfen`).
 Schatten gegen eigentlichen EFB **desselben Bildes**, alle 60 Bilder:
 
 | Bilder | mittlere Abweichung je Kanal | Pixel verschieden |
 |---|---|---|
 | 0–360 (Vorspann) | 0,00 | 0,0 % |
-| 420 (Aufblenden des Titels) | 1,78 | 12,3 % |
-| 480–1.500 (Titel) | 0,07–0,33 | 0,0–0,9 % |
-| 1.560 (Übergang zur Dateiauswahl) | 4,89 | 11,8 % |
-| 1.620–2.040 (Dateiauswahl) | 0,12–1,21 | 0,2–2,0 % |
+| 420 (Aufblenden des Titels) | 1,77 | 12,3 % |
+| 480–1.500 (Titel) | 0,08–0,32 | 0,0–0,8 % |
+| 1.560 (Übergang zur Dateiauswahl) | 1,32 | 1,3 % |
+| 1.620–2.040 (Dateiauswahl) | 0,10–0,88 | 0,1–1,4 % |
 
 Die Werte enthalten die Interpolation der Stufe 3: Der Schatten ist das
 Zwischenbild, der EFB das Bild B, und in der Dateiauswahl bewegen sich
-Mario, das Wasser und der pulsierende START-Schriftzug. Die beiden
-Ausreißer liegen in Überblendungen; woran es dort liegt, ist nicht
-untersucht. Naheliegend, aber Vermutung: Kopiert das Spiel innerhalb eines
-Bildes mehrfach aus dem EFB und zeichnet die Kopie zurück, hält der
-Texturcache im zweiten Durchlauf den Stand vom Ende des ersten, nicht den
-vom jeweiligen Zeichenbefehl, weil die Kopie gesperrt ist.
+Mario, das Wasser und der pulsierende START-Schriftzug. Bild 1.560 lag,
+solange der Schnappschuss die Shader-Verwalter nur neu markierte statt
+ihren Stand zurückzulesen (siehe Absturz unten), bei 4,89 und 11,8 Prozent.
+Der verbliebene Ausreißer ist das Aufblenden des Titels; woran es dort
+liegt, ist nicht untersucht. Naheliegend, aber Vermutung: Kopiert das Spiel
+innerhalb eines Bildes mehrfach aus dem EFB und zeichnet die Kopie zurück,
+hält der Texturcache im zweiten Durchlauf den Stand vom Ende des ersten,
+nicht den vom jeweiligen Zeichenbefehl, weil die Kopie gesperrt ist.
 
 ## Schritt 3: gebaut und gemessen
 
@@ -338,21 +341,39 @@ einen Flush; der zweite Durchlauf hatte dadurch zehnmal so viele
 Zeichenaufrufe wie der erste (3.783.741 gegen 375.146 über die
 Eingabefolge). Seit der zweite Durchlauf den lebenden XF-Speicher
 vergleicht und nur lädt, was noch nicht anliegt, sind die Zeichenaufrufe
-gleich; von 840 Millionen geänderten Wörtern brauchten 8,8 Millionen ein
-Laden.
+gleich; von 779 Millionen geänderten Wörtern brauchten 7,8 Millionen ein
+Laden. (Die Zeichenaufrufe je Bild schwanken zwischen Läufen um einige
+Prozent, 153 bis 161 je Bild in vier Läufen derselben Eingabefolge; das
+Verhältnis der beiden Durchläufe zueinander nicht.)
 
 Ganze Eingabefolge, Vulkan/Lavapipe, Bildgrenze an der XFB-Kopie:
 
 | | Wert |
 |---|---|
-| zweite Durchläufe / vorzeitig beendet | 2.083 / 0 |
-| Bilder interpoliert / Schnitte | 2.055 / 28 |
-| Zeichenaufrufe zweiter / erster Durchlauf | 334.731 / 334.907 |
-| zugeordnete Zeichenbefehle | 4.236.205 |
-| davon mit geladenen Wörtern | 157.766 (77 je Bild) |
-| geladene Wörter / schon anliegend | 8.807.458 / 839.837.036 |
+| zweite Durchläufe / vorzeitig beendet | 2.084 / 0 |
+| Bilder interpoliert / Schnitte | 2.055 / 29 |
+| Zeichenaufrufe zweiter / erster Durchlauf | 318.621 / 318.770 |
+| zugeordnete Zeichenbefehle | 3.938.567 |
+| davon mit geladenen Wörtern | 144.533 (70 je Bild) |
+| geladene Wörter / schon anliegend | 7.761.036 / 779.470.535 |
 | Projektion geladen | 1 |
-| `smc_failed` | 0 |
+| `smc_failed`, Exit-Code | 0, 0 |
+
+**Was der zweite Durchlauf die CPU kostet**, Null-Backend (kein Rastern),
+ungedrosselt, ganze Eingabefolge, vier Kerne der Messumgebung, Wanduhr
+einschließlich rund 17 s Start:
+
+| | Wanduhr | Bilder | Exit-Code |
+|---|---|---|---|
+| ohne Trockenlauf | 72,8 s | 2.106 | 0 |
+| Stufe 1 (dekodieren, Vertices laden, nichts zeichnen) | 75,3 s (+3 %) | 2.104 | 0 |
+| Stufe 3 (in den Schatten zeichnen, Matrizen interpolieren) | 86,0 s (+18 %) | 2.102 | 0 |
+
+Ohne den Start sind das rund 56 s gegen 70 s für 2.100 Bilder: Der volle
+zweite Durchlauf kostet hier gut 6 ms je Bild an CPU-Zeit, ein Viertel der
+Bildzeit dieses ungedrosselten Laufs. Das ist die Dekodierung und die
+Vertexverarbeitung; was das Rastern auf einer Grafikkarte kostet, sagt nur
+Schritt 6.
 
 **Liegt das Zwischenbild zwischen den Nachbarn?** Dateiauswahl, Bilder
 1.880 bis 1.887: Mario steht am Strand und atmet, das Wasser läuft, der
@@ -362,28 +383,28 @@ compare A mid B`):
 
 | Bild | Pixel A→B verschieden | davon im Intervall [A, B] ± 8 | außerhalb | nur im Zwischenbild verschieden |
 |---|---|---|---|---|
-| 1.881 | 7.945 (2,35 %) | 5.997 (75,5 %) | 1.948 | 361 |
-| 1.883 | 6.415 (1,90 %) | 4.946 (77,1 %) | 1.469 | 263 |
-| 1.885 | 6.142 (1,82 %) | 4.719 (76,8 %) | 1.423 | 413 |
-| 1.887 | 5.877 (1,74 %) | 4.506 (76,7 %) | 1.371 | 326 |
+| 1.881 | 7.786 (2,30 %) | 6.130 (78,7 %) | 1.656 | 424 |
+| 1.883 | 7.581 (2,24 %) | 5.751 (75,9 %) | 1.830 | 369 |
+| 1.885 | 6.246 (1,85 %) | 4.909 (78,6 %) | 1.337 | 253 |
+| 1.887 | 5.547 (1,64 %) | 4.295 (77,4 %) | 1.252 | 373 |
 
 Zum Vergleich die erste Messung mit der falschen Bildgrenze (Bilder 1.901
 bis 1.905): 92 bis 94 Prozent im Intervall, aber 19.300 Pixel, die nur im
 Zwischenbild anders waren — das HUD über dem geleerten Schatten. Jetzt sind
-es 263 bis 413.
+es 253 bis 424.
 
 Drei Befunde aus den Bildern selbst:
 
-- Das Zwischenbild liegt näher an B als an A (mittlere Abweichung 0,48
-  gegen 0,70 je Kanal bei Bild 1.881). Was nicht in Matrizen steckt — die
+- Das Zwischenbild liegt näher an B als an A (mittlere Abweichung 0,33
+  gegen 0,59 je Kanal bei Bild 1.881). Was nicht in Matrizen steckt — die
   Texturanimation des Wassers, die Vertexdaten selbst —, hat im
   Zwischenbild den Stand von B, weil der Strom von B läuft.
-- Von den Pixeln außerhalb des Intervalls liegen 88 bis 97 Prozent im
+- Von den Pixeln außerhalb des Intervalls liegen 96 bis 97 Prozent im
   START-Schriftzug. Der schrumpft von A nach B; im Zwischenbild steht er auf
   halbem Weg, und ein Pixel, das in A Schrift und in B Himmel ist, ist dort
   oft Umriss, weder das eine noch das andere. Das Pixelmaß ist für bewegte
   Kanten zu grob. Mario zeigt im vergrößerten Ausschnitt eine plausible
-  Zwischenstellung; von seinen Pixeln liegen 95 Prozent im Intervall.
+  Zwischenstellung; von seinen Pixeln liegen 94 bis 95 Prozent im Intervall.
 - Einen Strahlenkranz, den A um den Schriftzug zeichnet und B nicht mehr,
   hat das Zwischenbild nicht: Was nur A zeichnet, gibt es im Strom von B
   nicht.
@@ -396,12 +417,30 @@ Weg über Matrizen interpoliert keinen Film. Eine Messung im Spiel braucht
 eine Eingabefolge, die durch Film und Landung ins Spiel läuft, und dann
 Schritt 4, der das Zwischenbild überhaupt sichtbar macht.
 
-**Absturz beim Beenden.** Mit Trockenlauf (Stufe 2 oder 3) auf Vulkan endet
-die Laufzeit beim Beenden mit Signal 11 oder mit `free(): invalid next
-size` (Signal 6), nach dem Schreiben aller Zähler, in
-`InputConfig::ClearControllers` — fern vom Trockenlauf. Ohne Trockenlauf
-auf Vulkan und mit Trockenlauf auf dem Null-Backend nicht. Das ist eine
-Heap-Beschädigung; die Ursache ist offen, ein valgrind-Lauf läuft.
+**Ein Absturz beim Beenden, bis zum Grund verfolgt.** Mit Trockenlauf auf
+Vulkan endete die Laufzeit beim Beenden mit Signal 11 oder mit `free():
+invalid next size`, nach dem Schreiben aller Zähler, in
+`InputConfig::ClearControllers` — fern vom Trockenlauf; zuletzt auch auf
+dem Null-Backend. valgrind (60 Bilder, Stufe 2, Vulkan; 21.205 Fehler aus
+vier Stellen, ohne Trockenlauf keine davon) zeigte den Schreibzugriff:
+`VertexShaderManager::SetConstants` kopierte Nachtransformationsmatrizen
+hinter das Ende des Konstantenpuffers. Der Grund lag in meiner
+Wiederherstellung des Zustands: Sie rief `InvalidateXFRange(0, 0x1000)`,
+und diese Funktion rechnet für einen Bereich, der vor den
+Nachtransformationsmatrizen beginnt, deren Anfang absolut (0x500) statt
+relativ (0) — ebenso für die Lichter (`XFStateManager.cpp`). Ein latenter
+Fehler in Dolphin, der in diesem Baum sonst nie ausgelöst wird, weil kein
+anderer Aufrufer einen bereichsübergreifenden Bereich übergibt. Behoben,
+indem der Schnappschuss die vier Shader-Verwalter über ihre
+`DoState`-Serialisierung sichert und zurückliest, wie ein Sicherungsstand,
+statt sie neu zu markieren; danach `BPReload` und `MarkAllDirty` wie in
+`VideoCommon_DoState`. Exit-Code seither 0. Zwei weitere Fehler fielen
+dabei auf und sind behoben: Der erste Durchlauf hat beim Präsentieren meist
+schon Vertices des nächsten Bildes gesammelt, aber noch nicht gezeichnet —
+die landeten im Schatten oder wurden in Stufe 1 mit dem `cullall`-Stapel
+verworfen (jetzt ein Flush vor dem zweiten Durchlauf); und in Stufe 1
+löschte die nachgestellte EFB-Kopie den eigentlichen EFB, weil dort kein
+Schatten eingetauscht ist (jetzt ausgelassen).
 
 ## Was vorab zu prüfen war
 
