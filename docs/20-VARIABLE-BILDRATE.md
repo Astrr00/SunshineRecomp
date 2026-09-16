@@ -1,6 +1,7 @@
 # Variable Bildrate: der Weg in die Laufzeit (WP14)
 
-Stand: 2026-09-16. Der Auftraggeber hat als Ziel genannt: „variable Fps ohne
+Stand: 2026-09-16, am selben Tag um den Abschnitt „Was ein zweiter
+Durchlauf sperren muss" ergänzt. Der Auftraggeber hat als Ziel genannt: „variable Fps ohne
 die Spiellogik kaputt zu machen". Damit ist die Entscheidung aus
 [PLAN.md](PLAN.md), Abschnitt 5.4 gefallen — die Simulation bleibt bei 30 Hz,
 gerendert wird entkoppelt. Der Vorversuch WP13 ist abgeschlossen
@@ -60,6 +61,10 @@ ausführen, ohne einen Zustand zu berühren, den das Spiel liest?**
 Messung: derselbe Lauf mit und ohne Mitschnitt; Tonstrom und `frame_count`
 müssen identisch sein.
 
+> **Nachtrag vom 2026-09-16: `cullall` allein genügt nicht.** Die Antwort auf
+> die Frage steht im Quelltext, und sie lautet: nein, nicht ohne weitere
+> Sperren. Siehe den Abschnitt „Was ein zweiter Durchlauf sperren muss".
+
 **2. Schatten-EFB.** Der zweite Durchlauf zeichnet wirklich, in ein eigenes
 Farb- und Tiefenpaar. Der Mechanismus existiert (`FramebufferManager.cpp:238-248`
 legt bereits ein zweites Farbziel an).
@@ -83,6 +88,41 @@ voraus — im ganzen Projektbaum steht heute kein einziger Setzer dafür.
 **6. Kosten auf der Zielhardware.** Bilder je Sekunde und 99. Perzentil bei
 n = 2, 3, 4 und interner Skalierung 1x, 2x, 3x sowie 4K. **Das geht nur auf dem
 Windows-Rechner des Auftraggebers.**
+
+## Was ein zweiter Durchlauf sperren muss
+
+Stand: 2026-09-16, **aus dem Quelltext gelesen, nicht gemessen.**
+
+Dolphin führt die Liste selbst. `BPWritten` überspringt einen BP-Schreibvorgang,
+dessen Wert sich nicht geändert hat — außer bei elf Registern
+(`VideoCommon/BPStructs.cpp:82-87`). Genau diese elf sind die Register mit
+gastseitiger Nebenwirkung, und damit die Liste, die ein zweiter Durchlauf
+sperren muss:
+
+| BP-Register | Wirkung, die der Gast sieht | Fundstelle |
+|---|---|---|
+| `BPMEM_TRIGGER_EFB_COPY` | schreibt Gast-RAM bei `copyTexDest << 5`; je nach Ziel zusätzlich `ImmediateSwap` oder `FakeVIUpdate` | `BPStructs.cpp:246`, `:364`, `:371` |
+| `BPMEM_SETDRAWDONE` | `PixelEngine::SetFinish` — **erzeugt einen Interrupt** | `:180` |
+| `BPMEM_PE_TOKEN_ID` | `PixelEngine::SetToken`; der Gast liest das Token zurück | `:202` |
+| `BPMEM_PE_TOKEN_INT_ID` | `SetToken(..., true)` — **erzeugt einen Interrupt** | `:218` |
+| `BPMEM_CLEARBBOX1`, `BPMEM_CLEARBBOX2` | setzen die Bounding-Box-Register, die der Gast über die PE liest | `:519` |
+| `BPMEM_LOADTLUT0`, `BPMEM_LOADTLUT1` | lesen Gast-RAM in den TMEM | `:397` |
+| `BPMEM_TEXINVALIDATE`, `BPMEM_PRELOAD_MODE` | Zustand des Texturspeichers | `:594` |
+| `BPMEM_CLEAR_PIXEL_PERF` | setzt die Pixel-Zähler, die der Gast liest | `:582` |
+
+Dazu kommt der indizierte XF-Ladeweg: `LoadIndexedXF` liest zur
+Ausführungszeit lebenden Gast-RAM (`XFStructs.cpp:281-286`) — für den
+Trockenlauf harmlos, weil nur gelesen wird, aber er liefert im zweiten
+Durchlauf möglicherweise andere Werte als im ersten. Schritt 3 verlangt
+deshalb ohnehin die **aufgelösten** Wortwerte.
+
+**Folge für Schritt 1.** Die Formulierung „das Nichtzeichnen kostet eine
+Zeile" war zu knapp: `cullall` hält nur die Geometrie zurück. Der Trockenlauf
+braucht zusätzlich einen Riegel vor diesen elf Registern — am billigsten als
+Frühausstieg in `BPWritten`, gesetzt für die Dauer des zweiten Durchlaufs.
+Drei davon (`SETDRAWDONE`, beide Token) erzeugen Interrupts; sie im zweiten
+Durchlauf durchzulassen hieße, die Spiellogik zu ändern. Das ist genau der
+Maßstab, den der Auftraggeber gesetzt hat.
 
 ## Was vorab zu prüfen war
 
