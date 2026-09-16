@@ -5,13 +5,21 @@ Rückweg in den statischen Kern gebaut; dieses Dokument beantwortet die Frage,
 die damit sofort dringend wurde: **Rechnet der nativ ausgeführte Code richtig?**
 
 **Kurz:** Der Verifizierer ist freigeschaltet, und sein Urteil ist lesbar
-geworden. Er meldete zunächst Abweichungen in 3,4 % der geprüften Blöcke. Beide
+geworden. Er meldete zunächst Abweichungen in 3,4 % der geprüften Blöcke. Zwei
 Ursachen sind gefunden und je am Einzelfall belegt, und **keine von beiden ist
-ein Rechenfehler des Rekompilats**: 112 Meldungen kamen aus seiner eigenen
-Halteregel, die übrigen 4 aus einem Verbuchungsunterschied zwischen Modul und
-Interpreter. Nach Korrektur der Halteregel bleiben von 116 Meldungen **4**,
-ohne Rückweg **keine einzige**. In keiner der 116 Meldungen steht eine
-Abweichung im Rechenergebnis.
+ein Rechenfehler des Rekompilats**: seine eigene Halteregel, und ein
+Verbuchungsunterschied zwischen Modul und Interpreter.
+
+Stand nach beiden Korrekturen:
+
+| Umfang | geprüft | Meldungen |
+|---|---|---|
+| 30 Bilder, ohne Rückweg | 151 | 0 |
+| 30 Bilder, mit Rückweg | 3.410 | **0** |
+| ganze Eingabefolge, mit Rückweg | 16.790 | **19** (0,11 %) |
+
+Über 30 Bilder bleibt nichts übrig. Über die ganze Folge bleiben 19, und die
+sind **nicht** aufgeklärt.
 
 ## Warum er abgeschaltet war
 
@@ -154,7 +162,38 @@ if (ppc.pc == end_pc && interp_cycles >= native_charge)
 
 **112 der 116 Meldungen waren die Halteregel.**
 
-### Die verbliebenen vier
+### Die Spätprüfung: den Verifizierer die Frage selbst beantworten lassen
+
+Statt die übrigen Meldungen einzeln von Hand zu verfolgen, beantwortet der
+Verifizierer die Frage jetzt selbst. Wenn er an der Endadresse nicht
+übereinstimmt, läuft die Nachbildung weiter — bis zu acht weitere Ankünfte an
+derselben Adresse — und vergleicht jedes Mal erneut. **Stimmt sie später
+exakt überein** (alle Register, alle Gleitkommawerte, alle protokollierten
+Speicherbytes), dann lag der Unterschied am Haltepunkt und nicht an der
+Rechnung; das wird als `late` gezählt statt als Abweichung gemeldet.
+
+Wirkung über 30 Bilder:
+
+| | Meldungen | Spättreffer |
+|---|---|---|
+| vorher | 4 von 3.408 | — |
+| nachher | **0 von 3.410** | 4, zusammen 13 weitere Runden |
+
+**Über 30 Bilder bleibt keine einzige Abweichung.** Alle vier waren
+Spättreffer: Die Nachbildung erreichte den Zustand des Moduls nach insgesamt
+13 weiteren Schleifenrunden bitgenau.
+
+Über die ganze Eingabefolge fällt die Zahl von 52 auf **19 von 16.790**
+(0,11 %), bei 10 Spättreffern. Eine hundertfach höhere Schrittobergrenze
+ändert daran nichts (19 gegen 23 — Streuung zwischen Läufen).
+
+**Diese 19 sind nicht alle vom selben Muster.** Einige zeigen Unterschiede
+anderer Art: bei einem weicht der Stapelzeiger `r1` ab, bei einem anderen ein
+Gleitkommaregister. Sie sind **nicht** aufgeklärt, und sie als „vermutlich
+dasselbe" abzutun wäre genau der Fehler, den dieses Dokument zweimal
+berichtigt hat.
+
+### Die verbliebenen vier (vor der Spätprüfung)
 
 ```
 #1 entry=0x802F5754 end=0x802F58C4: r7:N=0x13,I=0xf
@@ -254,7 +293,12 @@ sich auf den Spielzustand auswirkt, wäre dabei kaum unbemerkt geblieben.
 
 ## Nächster Schritt
 
-Der Verbuchungsunterschied ist der nächste Gegenstand, und er reicht über den
+Die 19 verbliebenen Meldungen der langen Folge sind der nächste Gegenstand —
+einzeln, mit `STATICRECOMP_LOCKSTEP_TRACE`, so wie die beiden aufgeklärten
+Fälle. Wer sie ungeprüft als „vermutlich dasselbe" abhakt, wiederholt den
+Fehler, den dieses Dokument zweimal berichtigen musste.
+
+Daneben bleibt der Verbuchungsunterschied, und er reicht über den
 Verifizierer hinaus: Wenn das Modul je Schleifenrunde rund 10 % zu wenig
 verbucht, läuft die emulierte Uhr gegenüber der geleisteten Arbeit zu schnell.
 [12-TON.md](12-TON.md) hat Ton und Bild innerhalb von 0,3 % zur Filmrate

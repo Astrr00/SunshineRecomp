@@ -61,14 +61,11 @@ Zwei Punkte bleiben offen und sind die nächsten Schritte:
 1. **Richtigkeit.** Der Lockstep-Verifizierer ist freigeschaltet, und seine
    Meldungen sind aufgeklärt ([17](17-LOCKSTEP.md)): 112 von 116 kamen aus
    seiner eigenen Halteregel, die bei Schleifen nach der ersten Runde anhielt.
-   Nach der Korrektur bleiben **52 von 16.781** geprüften Blöcken über die
-   ganze Eingabefolge (0,31 %), über 30 Bilder **4 von 3.408**, ohne Rückweg
-   **keiner von 151** — und auch diese vier sind aufgeklärt: Das Modul
-   verbucht je Schleifenrunde rund 10 % zu wenig Takte (gemessen: 26 gegen
-   29), weshalb die Halteregel eine Runde zu früh greift. **In keiner der 116
-   Meldungen steht eine Abweichung im Rechenergebnis.** Solange der
-   Verbuchungsunterschied nicht behoben ist, bleibt der Rückweg ausdrücklich
-   zu schalten (`STATICRECOMP_YIELD=1`) und nicht Voreinstellung.
+   Nach zwei Korrekturen am Verifizierer selbst — der Halteregel und einer
+   Spätprüfung — bleiben über 30 Bilder **0 von 3.410** und über die ganze
+   Eingabefolge **19 von 16.790** (0,11 %). Die 19 sind nicht aufgeklärt und
+   nicht alle vom selben Muster. Solange sie stehen, bleibt der Rückweg
+   ausdrücklich zu schalten (`STATICRECOMP_YIELD=1`) und nicht Voreinstellung.
 2. **Geschwindigkeit.** Nativ läuft das Spiel 1,27-mal langsamer als mit dem
    Ersatz-JIT — nach einer ersten Verbesserung um 52 %
    (`moderngekko-host-call-active.patch`). Der Rest sind Prüfungen je Dispatch,
@@ -101,6 +98,7 @@ sondern „hier ist ein Patch — ist das der beabsichtigte Weg?".
 | [18](18-SKALIERER.md) | Ausgabe-Skalierer und hohe Auflösung |
 | [19](19-ULTRAWIDE.md) | Ultrawide: 21:9 und 32:9 an der Projektion abgenommen |
 | [20](20-VARIABLE-BILDRATE.md) | variable Bildrate: der Weg in die Laufzeit, sechs Schritte |
+| [21](21-KOSTEN-DES-KERNS.md) | warum der native Kern langsam ist: 173,5 Wirtszyklen je Dispatch |
 
 Die frühere Chronik dieses Dokuments ist in die Matrizen oben aufgegangen. Was
 darunter folgt, sind die Messwerte der Windows-Sitzungen; sie bleiben als

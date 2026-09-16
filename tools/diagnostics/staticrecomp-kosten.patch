@@ -1,0 +1,214 @@
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp
+@@ -13,6 +13,7 @@
+ #include "Common/Logging/Log.h"
+ 
+ #include <cstdio>
++#include <map>
+ 
+ namespace
+ {
+@@ -369,9 +370,56 @@
+   }
+ }
+ 
++// MESSUNG: Aufteilung der Rueckfaelle aus nativem Code. hook_fb zaehlt sie
++// zusammen; hier steht, wie teuer sie einzeln sind.
++u64 g_hook_fast = 0;
++u64 g_hook_slow = 0;
++std::map<u32, u64> g_hook_kinds;
++std::map<u32, u64> g_hook_fast_kinds;
++
+ void StaticRecompCore::HookInstructionFallback(CPUState* cpu, u32 raw, u32 cia)
+ {
+   auto* core = static_cast<StaticRecompCore*>(cpu->external_user_data);
++
++  // MESSUNG (docs/21): dcbf und dcbst sind bei abgeschaltetem Datencache
++  // wirkungslos und machen 98,4 Prozent aller Rueckfaelle aus -- 132,7
++  // Millionen je 180 Bilder. Dieser Zweig zieht sie vor die uebrige Vorarbeit,
++  // um zu messen, wie viel davon die Vorarbeit kostet und wie viel der Aufruf
++  // selbst. Nur ohne REL-Module, weil sonst cia zu uebersetzen waere.
++  if (core->m_skip_cacheop_preamble && (raw >> 26) == 31u)
++  {
++    const u32 xo = (raw >> 1) & 0x3FFu;
++    if (xo == 86u || xo == 54u)
++    {
++      ++core->m_hook_fallback_instructions;
++      core->m_system.GetPPCState().downcount -= 5;
++      cpu->pc = cia + 4u;
++      ++g_hook_fast;
++      ++g_hook_fast_kinds[xo];
++      return;
++    }
++  }
++
++  cia = core->TranslateRelAddress(cia);
++  ++core->m_hook_fallback_instructions;
++
++  // Lockstep: a block that fell back to the interpreter for an unmodeled
++  // instruction (DMA mtspr, cache op, ...) performed side effects not captured
++  // by the RAM journal / MMIO hooks, so re-running it on the shadow would
++  // double-issue them. Mark it unsafe to differentially check.
++  if (core->m_lockstep_verifier->m_ls_journaling)
++    core->m_lockstep_verifier->m_ls_fallback_seen = true;
++
++  auto& system = core->m_system;
++  auto& ppc = system.GetPPCState();
++
++  // Fast path for dcbf/dcbst/dcbi/icbi: streaming code flushes caches in
++  // 32-byte loops (thousands per frame), and these ops read two GPRs and
++  // change no CPU state, so they run straight off ctx without the full
++  // SyncOut/interpreter/SyncIn round trip. This mirrors Dolphin's
++  // interpreter with dcache emulation off: every one funnels into
++  // InvalidateICacheLine (keeping the SMC guard exact). dcbi's PR!=0
++  // privilege trap and dcache-on configs take the slow path.
+   if ((raw >> 26) == 31u && !ppc.m_enable_dcache)
+   {
+     const u32 xo = (raw >> 1) & 0x3FFu;
+@@ -388,6 +436,8 @@
+       // here (icbi 4, dcbf/dcbst/dcbi 5); their emitted block cost is zero.
+       ppc.downcount -= (xo == 982u) ? 4 : 5;
+       cpu->pc = cia + 4u;
++      ++g_hook_fast;
++      ++g_hook_fast_kinds[xo];
+       return;
+     }
+   }
+@@ -395,6 +445,16 @@
+   // The recompiled segment resumes via the dispatcher at the PC this leaves
+   // behind, so this must execute exactly the instruction at cia via
+   // Dolphin's interpreter and hand the register state back.
++  // MESSUNG (docs/21): Welche Befehle nehmen den teuren Weg? Jeder davon
++  // kostet SyncOut, einen Interpreterschritt und SyncIn. Geschluesselt nach
++  // Hauptopcode und, bei 31, erweitertem Opcode.
++  ++g_hook_slow;
++  {
++    const u32 primaer = raw >> 26;
++    const u32 schluessel = (primaer << 10) | (primaer == 31u ? ((raw >> 1) & 0x3FFu) : 0u);
++    ++g_hook_kinds[schluessel];
++  }
++
+   core->SyncOut();
+   ppc.pc = cia;
+   ppc.npc = cia + 4;
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
+@@ -252,11 +252,45 @@
+ u64 g_sr_jit_ticks = 0;
+ // Takte, die CoreTiming ueberspringt (Leerlauf) -- niemand fuehrt sie aus.
+ u64 g_sr_advance_ticks = 0;
++u64 g_sr_burst_tsc = 0;
++u64 g_sr_dispatch_tsc = 0;
+ 
+ void StaticRecompCore::Shutdown()
+ {
+   g_static_recomp_core = nullptr;
+   m_system.GetMemory().SetRelocationAliases({});
++  {
++    extern u64 g_sr_burst_tsc;
++    extern u64 g_sr_dispatch_tsc;
++    extern u64 g_hook_fast;
++    extern u64 g_hook_slow;
++    extern std::map<u32, u64> g_hook_kinds;
++    extern std::map<u32, u64> g_hook_fast_kinds;
++    std::vector<std::pair<u32, u64>> arten(g_hook_kinds.begin(), g_hook_kinds.end());
++    std::sort(arten.begin(), arten.end(),
++              [](const auto& a, const auto& b) { return a.second > b.second; });
++    std::string oben;
++    for (size_t i = 0; i < arten.size() && i < 8; ++i)
++      oben += fmt::format(" op{}{}={}", arten[i].first >> 10,
++                          (arten[i].first >> 10) == 31 ? fmt::format(".{}", arten[i].first & 0x3FF)
++                                                       : std::string(),
++                          arten[i].second);
++    std::string schnell_oben;
++    for (const auto& [xo, n] : g_hook_fast_kinds)
++      schnell_oben += fmt::format(" xo{}={}", xo, n);
++    std::fprintf(stderr,
++                 "[staticrecomp] burst: wirtszyklen=%llu dispatches=%llu je_dispatch=%.1f "
++                 "im_modul=%llu je_dispatch_modul=%.1f\n",
++                 (unsigned long long)g_sr_burst_tsc, (unsigned long long)m_native_dispatches,
++                 m_native_dispatches ? double(g_sr_burst_tsc) / double(m_native_dispatches) : 0.0,
++                 (unsigned long long)g_sr_dispatch_tsc,
++                 m_native_dispatches ? double(g_sr_dispatch_tsc) / double(m_native_dispatches) : 0.0);
++    std::fprintf(stderr, "[staticrecomp] hooks-schnell:%s\n",
++                 schnell_oben.empty() ? " keine" : schnell_oben.c_str());
++    std::fprintf(stderr, "[staticrecomp] hooks: schnell=%llu langsam=%llu arten=%zu%s\n",
++                 (unsigned long long)g_hook_fast, (unsigned long long)g_hook_slow,
++                 g_hook_kinds.size(), oben.c_str());
++  }
+   std::fprintf(stderr,
+                "[staticrecomp] yield: yields=%llu rejects=%llu noprogress=%llu span=%u jit_ticks=%llu "
+                "advance_ticks=%llu\n",
+@@ -368,7 +402,9 @@
+ 
+   m_module = desc;
+   m_module_active = (desc != nullptr);
+-
++  m_skip_cacheop_preamble = desc && desc->num_rel_modules == 0 &&
++                            !m_system.GetPPCState().m_enable_dcache &&
++                            std::getenv("STATICRECOMP_FAST_CACHEOP") != nullptr;
+ 
+   // Der Modulbereich als Bereichsvergleich fuer den Rueckweg. Bis der
+   // Lockstep-Verifizierer zur Verfuegung steht (das Modul exportiert
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
+@@ -197,6 +197,8 @@
+   u64 m_rel_mapping_generation = 0;
+   // Runden ohne Gastfortschritt hinter einem Rueckweg-Hinweis (Notbremse).
+   u32 m_yield_stall = 0;
++  // Messschalter: dcbf/dcbst vor der uebrigen Vorarbeit abfertigen.
++  bool m_skip_cacheop_preamble = false;
+   u32 m_failed_chunks = 0;    // chunks currently failing verification (real SMC)
+   u64 m_verifications = 0;    // chunk hash checks performed
+   u64 m_reverify_events = 0;  // invalidations that reset a chunk to Unverified
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
+@@ -15,6 +15,10 @@
+ #include <algorithm>
+ #include <cstdio>
+ 
++#if defined(_M_X86_64)
++#include <x86intrin.h>
++#endif
++
+ namespace
+ {
+ constexpr u32 SYNC_EXCEPTION_MASK = ~static_cast<u32>(
+@@ -27,6 +31,11 @@
+ extern u64 g_sr_yield_rejects;
+ extern u64 g_sr_yield_noprogress;
+ extern u64 g_sr_jit_ticks;
++// MESSUNG (docs/21): Wirtszyklen im Burst, um "wie teuer ist ein Dispatch?"
++// direkt zu beantworten statt zu erschliessen. Ein rdtsc je Burst, nicht je
++// Dispatch -- bei 513 Dispatches je Burst ist das im Rauschen.
++extern u64 g_sr_burst_tsc;
++extern u64 g_sr_dispatch_tsc;   // davon im Modul selbst
+ extern u64 g_sr_advance_ticks;
+ 
+ void StaticRecompCore::Run()
+@@ -113,6 +122,7 @@
+       {
+         SyncIn();
+         ++m_bursts;
++        const u64 burst_tsc_start = __rdtsc();
+         do
+         {
+           const bool do_ls = lockstep_enabled && m_lockstep_verifier->ShouldCheck(m_guest.pc);
+@@ -128,7 +138,9 @@
+           if (m_module->num_rel_modules != 0)
+             ResolveNativeAddress(runtime_dispatch_address, &linked_dispatch_address, nullptr);
+           m_guest.pc = linked_dispatch_address;
++          const u64 dispatch_tsc_start = __rdtsc();
+           m_module->dispatch(&m_guest, linked_dispatch_address);
++          g_sr_dispatch_tsc += __rdtsc() - dispatch_tsc_start;
+           if (m_module->num_rel_modules != 0)
+             m_guest.pc = TranslateRelAddress(m_guest.pc);
+           ++m_native_dispatches;
+@@ -185,6 +197,7 @@
+         } while (m_module_active && fast_dispatchable_at(m_guest.pc) &&
+                  !(m_guest.host_call && IsHostCallAddress(m_guest.pc)) && ppc.downcount > 0 &&
+                  *state_ptr == CPU::State::Running);
++        g_sr_burst_tsc += __rdtsc() - burst_tsc_start;
+         SyncOut();
+         if ((ppc.Exceptions & SYNC_EXCEPTION_MASK) != 0)
+           power_pc.CheckExceptions();
