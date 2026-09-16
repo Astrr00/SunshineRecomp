@@ -98,3 +98,11 @@ Schritten von höchstens 300 Bildern (die Sonde wartet je Schritt 120 s auf
 die Bestätigung; auf Lavapipe sind das rund 30 s). Erreicht nach etwa 4.300
 Bildern den Flugplatz von Isle Delfino als Spielszene (Peach, Mario,
 Sprechblase). Keine Zusage, nur Messfolge für docs/20.
+
+## `fixtures/game-water.json`
+
+Führt `game-airstrip.json` fort: acht weitere A-Tasten durch die
+Sprechblasen, dann Stick vor, rechts und zurück (je 300 Bilder). Ab etwa
+Bild 5.400 hat der Spieler die Steuerung, ab etwa 6.100 läuft Mario ins
+Wasser und schwimmt, die Kamera folgt — die erste Folge mit Kamerabewegung
+(docs/20). 8.126 Bilder, auf Lavapipe rund 20 Minuten.

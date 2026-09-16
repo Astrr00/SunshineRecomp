@@ -569,8 +569,53 @@ Figuren atmen. Die Stick-Eingabe bewirkt in der Sprechblase nichts.
 Im Film ändert sich keine Matrix, das Zwischenbild ist Bild B. In der
 Spielszene liegt das Zwischenbild symmetrisch zwischen beiden Nachbarn —
 erste Messung an einer echten 3D-Szene des Spiels, aber ohne Kamerafahrt.
-Die verlangt eine längere Folge durch die Sprechblasen hindurch; der Lauf
-dafür ist angestoßen.
+
+## Messung im Spiel mit Kamerabewegung
+
+`tools/acceptance/fixtures/game-water.json` (neu) führt weiter: acht
+A-Tasten durch die Sprechblasen, dann Stick vor, rechts, zurück. Ab etwa
+Bild 5.400 hat der Spieler die Steuerung (HUD, Peach, Toad, Mario am
+Flugplatz), ab etwa 6.100 läuft Mario ins Wasser und schwimmt, die Kamera
+folgt ihm. 8.145 Bilder auf Vulkan/Lavapipe, Stufe 3, Exit-Code 0, kein
+Durchlauf vorzeitig beendet. Je Fenster A = EFB von Bild n − 1, B = Bild
+n, Zwischenbild = Schatten von Bild n:
+
+| Fenster | Szene | Pixel A→B verschieden | Zwischenbild gegen A / gegen B | im Intervall | nur im Zwischenbild |
+|---|---|---|---|---|---|
+| 4.350–5.100 | Flugplatz, Sprechblase, Kamera steht | 1,6–1,7 % | 0,8 % / 0,7 % | 98,8–99,0 % | 158–162 |
+| 5.250–6.000 | Flugplatz, Steuerung, Kamera steht | 0,9–1,1 % | 0,4–0,6 % / 0,4–0,5 % | 98,8–99,2 % | 72–83 |
+| 6.150 | Mario läuft los | 5,2 % | 4,1 % / 4,0 % | 67,0 % | 261 |
+| 6.300 | Mario läuft ins Wasser | 6,3 % | 5,1 % / 5,1 % | 74,5 % | 332 |
+| 6.450 | Übergang (Schnitt) | 45,2 % | 49,2 % / 22,2 % | 75,2 % | 24.638 |
+| 6.600 | Mario im flachen Wasser, Kamera folgt | 14,7 % | 12,6 % / 9,3 % | 85,5 % | 10.829 |
+| 6.750–6.900 | schwimmen, Kamera folgt | 8,6–10,8 % | 7,0–8,1 % / 1,8–2,5 % | 96,6–96,7 % | 699–939 |
+| 7.050–7.200 | schwimmen an der Kaimauer | 16,5–24,6 % | 12,6–18,8 % / 7,1–12,9 % | 91,6–93,4 % | 6.942–11.202 |
+| 7.350–7.500 | | 4,4–5,2 % | 4,2–5,0 % / 0,2 % | 99,5–99,8 % | 49–54 |
+| 7.650–7.800 | schwimmen, Kamera folgt | 14,9–16,1 % | 12,6–14,4 % / 9,0–10,0 % | 87,1–89,0 % | 10.761–11.085 |
+| 7.950–8.100 | | 14,4–16,7 % | 13,4–15,3 % / 0,9–1,5 % | 98,7–99,2 % | 320–391 |
+
+Bild 7.201 im Einzelnen: 7.781 Zeichenbefehle, alle zugeordnet, 717
+Ladepakete mit 6.995 Wörtern, Projektion unverändert. Im Bildstreifen A,
+Zwischenbild, B steht Mario im Zwischenbild auf halbem Weg, Kaimauer und
+Wasserkante ebenso.
+
+Was die Zahlen sagen: Wo die Kamera fährt und Mario schwimmt, liegt das
+Zwischenbild von beiden Nachbarn verschieden weit entfernt und zu 85 bis
+93 Prozent im Intervall; die Pixel außerhalb und die nur im Zwischenbild
+geänderten sind bewegte Kanten und Wellen, wie auf dem Titel. Die Fenster
+mit „gegen B 0,2 bis 1,5 Prozent" bei 5 bis 17 Prozent Änderung sind
+Bilder, deren Bewegung nicht in den Matrizen steckt — Wasser und
+Wellen kommen aus Vertexdaten und Texturanimation, die im Zwischenbild den
+Stand von B haben. Das ist die bekannte Grenze des Matrixwegs: Er bewegt
+Kamera und Figuren, nicht das, was das Spiel je Bild neu berechnet.
+Beim Losgehen (6.150, 6.300) sind es 67 bis 75 Prozent im Intervall bei
+kleinen Änderungen — Mario dreht sich und die Kamera schwenkt, die
+Spuren im Sand sind Texturen.
+
+**Damit ist Schritt 3 an einer Spielszene mit Kamerafahrt gemessen.**
+Offen bleibt, wie das aussieht, wenn es sich bewegt: Der Bildstreifen ist
+ein Standbild, die 30-Hz-Abfolge aus Zwischenbild und echtem Bild sieht
+nur ein Monitor. Das ist Schritt 6.
 
 ## Was vorab zu prüfen war
 
