@@ -231,7 +231,9 @@ function Add-Patches {
         # dem Vorbild zugeordnet und die geaenderten Matrixwoerter vor dem
         # Zeichenbefehl auf den Zwischenwert gesetzt, sofern er nicht schon
         # anliegt (Nachbau von tools/framerate/interpolate.py in der
-        # Laufzeit). Gemessen ueber die ganze Eingabefolge: jedes Byte erneut
+        # Laufzeit). MODERNGEKKO_GX_DRYRUN_PRESENT=m praesentiert je Spielbild
+        # 2m Bilder, davon 2m-1 Zwischenbilder (Stufe 4 und 5).
+        # Gemessen ueber die ganze Eingabefolge: jedes Byte erneut
         # dekodiert, Vertices und Zeichenaufrufe gleich, Boot-Tonstrom
         # abtastwertgleich. Ohne die Variable inaktiv.
         @{

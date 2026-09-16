@@ -91,6 +91,11 @@ prüfen.
 **5. Taktentkopplung** auf dem GPU-Faden, Dualcore. Setzt `CPUThread = True`
 voraus — im ganzen Projektbaum steht heute kein einziger Setzer dafür.
 
+> **Nachtrag vom 2026-09-16:** Der Satz war falsch. `tools/netplay_session.cpp`
+> setzt `Config::MAIN_CPU_THREAD` für Netplay, und über Dolphin.ini
+> (`[Core] CPUThread=True`, in der Sonde per `--core-setting`) lässt sich
+> der Zweikernbetrieb einschalten. Siehe „Schritt 5: Vorabprüfung".
+
 **6. Kosten auf der Zielhardware.** Bilder je Sekunde und 99. Perzentil bei
 n = 2, 3, 4 und interner Skalierung 1x, 2x, 3x sowie 4K. **Das geht nur auf dem
 Windows-Rechner des Auftraggebers.**
@@ -447,7 +452,7 @@ verworfen (jetzt ein Flush vor dem zweiten Durchlauf); und in Stufe 1
 löschte die nachgestellte EFB-Kopie den eigentlichen EFB, weil dort kein
 Schatten eingetauscht ist (jetzt ausgelassen).
 
-## Schritt 4: gebaut, Bild noch nicht geprüft
+## Schritt 4: gebaut und im Mitschnitt gemessen
 
 `MODERNGEKKO_GX_DRYRUN_PRESENT=1` zusätzlich zu Stufe 3. Der zweite
 Durchlauf läuft jetzt vor dem Präsentieren (`before_present_event`).
@@ -460,22 +465,242 @@ echte Bild. Die Ausgaberate bleibt, die Reihenfolge stimmt (A, Zwischenbild,
 B), das echte Bild erscheint eine Präsentation später als zuvor. Bei einem
 Schnitt oder ohne Wiederholung davor bleibt alles beim XFB.
 
-Gemessen bisher nur die Zähler, Null-Backend, Eingabefolge plus 3.000
-Bilder: 10.343 Präsentierungen, 5.189 Wiederholungen, 5.047 davon mit dem
-Zwischenbild belegt, Exit-Code 0. **Nicht geprüft ist das Bild** — ob das
-ersetzte Bild wirklich auf dem Schirm oder im Mitschnitt erscheint. Der
-Weg dafür steht: `headless_probe --gfx-setting DumpFrames=True
---gfx-setting DumpFramesAsImages=True` (neu) legt je Präsentation ein PNG
-unter `user/Dump/Frames` ab; ohne Stufe 4 müssen die Paare gleich sein, mit
-Stufe 4 muss das erste Bild jedes Paares zwischen seinen Nachbarn liegen
-(`tools/framerate compare`). Alternativ der Bildschirm selbst über
-`tools/diagnostics/window_capture.py` (docs/18).
+Zähler, Null-Backend, Eingabefolge plus 3.000 Bilder: 10.343
+Präsentierungen, 5.189 Wiederholungen, 5.047 davon mit dem Zwischenbild
+belegt, Exit-Code 0.
+
+**Das Bild, im Mitschnitt.** Dolphins Bildmitschnitt (`[Movie]
+DumpFrames=True` in Dolphin.ini, `DumpFramesAsImages=True` in GFX.ini —
+`headless_probe --core-setting`/`--gfx-setting`) schreibt je eindeutigem
+Bild ein PNG des präsentierten Bildes, 640×480, und zwar bei der ersten
+Präsentation; mit Stufe 4 ist das genau das Zwischenbild. Zwei Läufe über
+die ersten 960 Bilder (Vorspann und Titel), einmal ohne, einmal mit
+`MODERNGEKKO_GX_DRYRUN_PRESENT=1`; beide deterministisch (Bilder 2, 50, 200
+pixelgleich), 951 von 969 Bildern ersetzt. A und B sind die Mitschnitte
+des Laufs ohne, das Zwischenbild der Mitschnitt des Laufs mit:
+
+| Bild | Pixel A→B verschieden | Zwischenbild gegen A / gegen B | im Intervall | nur im Zwischenbild |
+|---|---|---|---|---|
+| 300 (Aufblenden, Schnitt) | 12,35 % | 12,35 % / 0,00 % | — (nicht ersetzt) | 2 |
+| 420 (Titel blendet auf) | 24,45 % | 14,60 % / 14,22 % | 99,5 % | 1.864 |
+| 520 | 8,96 % | 9,16 % / 0,36 % | 99,2 % | 1.274 |
+| 600 | 0,91 % | 0,86 % / 0,67 % | 85,0 % | 929 |
+| 800 | 2,22 % | 4,58 % / 3,88 % | 81,3 % | 8.490 |
+| 900 | 2,24 % | 4,23 % / 3,79 % | 84,6 % | 7.611 |
+
+Bild 420 ist der Beleg: Das präsentierte Bild liegt zu gleichen Teilen
+zwischen seinen Nachbarn. Bild 520 zeigt die Grenze des Verfahrens: Die
+Änderung von A nach B steckt dort nicht in Matrizen, das Zwischenbild ist
+B.
+
+**Derselbe Kopierweg wie das echte Bild.** Das Zwischenbild kam zunächst
+als Blit direkt aus dem 640×528-Schatten, das echte Bild geht durch die
+XFB-Kopie mit Kopierfilter, Gamma und Zeilenskalierung (hier auf 448
+Zeilen). Damit die beiden Präsentationen eines Bildes nicht verschieden
+gefiltert sind, nimmt das Zwischenbild jetzt denselben Weg:
+`TextureCacheBase::CopyEFBToTarget` (neu, Nachbau des Farbfalls von
+`CopyEFBToCacheEntry`) kopiert den Schatten mit den Parametern der
+XFB-Kopie des Bildes in eine eigene Textur, die dann präsentiert wird —
+kein Cache-Eintrag, kein RAM. Geprüft: Die kopierte Textur (`mid_<n>.png`
+im Dump-Verzeichnis) zeigt Bild für Bild denselben Inhalt wie der Schatten.
+
+Die Pixel, die nur im Zwischenbild anders sind (bis 3,6 Prozent bei den
+Bildern 800 und 900), hatte ich zuerst dieser Filterung zugeschrieben. Das
+war falsch — mit dem gemeinsamen Kopierweg bleiben sie (10.763 bei Bild
+900). Die Maske zeigt, wo sie liegen: eine fliegende Möwe oben links, die
+sich je Bild um mehr als ihre eigene Breite bewegt und im Zwischenbild an
+einer Stelle steht, an der weder A noch B sie zeigen, und die
+Wellenkämme des Wassers, die im Zwischenbild in einer Zwischenphase
+liegen. Das ist echte Bewegung; das Pixelmaß „zwischen A und B" kann sie
+nicht erfassen. Als Fehlermaß taugen diese Pixel deshalb nicht.
+
+Eine Falle beim Vergleichen, gefunden an einem Ausreißer: Die Sonde
+liefert die Eingaben der Folge nach Wanduhr, nicht nach Bildnummer. Läuft
+nebenher ein zweiter Lauf, verschieben sich die Eingaben um Bilder, der
+Bildzähler weicht ab (962 statt 967), und Bild 520 des einen Laufs ist
+nicht Bild 520 des anderen. Vergleichbar sind nur Läufe mit gleicher
+Bildzahl.
+
+## Schritt 5: Vorabprüfung, der Zweikernbetrieb läuft
+
+Stand: 2026-09-16, gemessen auf dem Null-Backend, ganze Eingabefolge,
+`CPUThread=True` über `--core-setting`.
+
+| Lauf | Bilder | Exit-Code | Trockenlauf |
+|---|---|---|---|
+| Zweikern, ohne Trockenlauf | 2.101 | 0 | — |
+| Zweikern, Stufe 3 mit Präsentieren | 2.114 | 0 | 2.132 Bilder, 0 vorzeitig beendet, 28 Schnitte, 4.279 Präsentierungen, 2.147 Wiederholungen, 2.099 ersetzt |
+
+Der statische Kern läuft im Zweikernbetrieb (die Gleichheit des Ergebnisses
+über 180 Bilder mit Tonmitschnitt steht unten unter „Was vorab zu prüfen
+war"), und der zweite Durchlauf läuft dort auf dem GPU-Faden, wo
+`before_present_event` ihn ruft. Eine Stelle
+musste dafür weichen: `CopyPreprocessCPStateFromMain` im Zurücklesen des
+Schnappschusses — im Zweikernbetrieb gehört der Vorverarbeitungsstand dem
+CPU-Faden. Was Schritt 5 darüber hinaus verlangt, ist die Entkopplung des
+Präsentierens vom VI-Takt (mehr als ein Zwischenbild je Spielbild, t ≠ 0,5,
+Ausgabe mit der Bildrate des Monitors); das ist nicht gebaut.
+
+Was der Zweikernbetrieb hier bringt: nichts. Ungedrosselt auf dem
+Null-Backend, ganze Eingabefolge, ohne Trockenlauf: 57,4 s Einkern gegen
+57,1 s Zweikern (2.109 und 2.113 Bilder, rund 37 Bilder je Sekunde). Auf
+Null-Grafik hat der GPU-Faden kaum Arbeit; was er auf einer Grafikkarte
+abnimmt, sagt erst Schritt 6.
+
+## Schritt 5: gebaut und im Mitschnitt gemessen
+
+> Der folgende Entwurf ist umgesetzt; die Messung steht am Ende des Abschnitts.
+
+Stand heute: `VideoBackendBase.cpp:112` ruft `Presenter::ViSwap` je
+VI-Feld, also mit 60 Hz; `SecondPass` hängt an `before_present_event` und
+liefert ein Zwischenbild je Spielbild bei t = 0,5. Die Ausgabe bleibt bei
+60 Hz — 30 Spielbilder, dazwischen je ein Zwischenbild. Schritt 5 löst
+das Präsentieren vom VI-Takt: bei Monitor-Bildrate R sind es je Spielbild
+(33,3 ms) n = R/30 Präsentierungen mit t = 1/n, 2/n, …, das echte Bild
+zuletzt. Das echte Bild erscheint dann ein Spielbild später als ohne
+Interpolation; heute, bei 60 Hz, ist es eine Präsentation.
+
+Was zu bauen ist:
+
+- **Ein Zeitgeber auf dem GPU-Faden.** Im Zweikernbetrieb läuft
+  `Fifo::RunGpuLoop` ohnehin als Schleife (`m_gpu_mainloop.Run`); dort ein
+  Host-Zeitgeber: ist seit der letzten Präsentation 1/R vergangen und steht
+  kein VI-Feld an, `Presenter::PresentIntermediate(t)` mit t aus der
+  Wanduhr zwischen den emulierten Zeitpunkten der letzten beiden XFB-Kopien
+  (`PresentInfo::emulated_timestamp` kennt sie). Im Einkernbetrieb müsste
+  der Zeitgeber ein `CoreTiming`-Ereignis sein — deterministisch, aber die
+  Ausgabe folgt dann der Emulationsgeschwindigkeit, nicht dem Monitor.
+- **`SecondPass` mit t als Parameter** und mehreren Durchläufen je Bild:
+  die Zuordnung (`MatchDraws`) einmal je Bild, das Laden der Zwischenwerte
+  je Durchlauf, das Zwischenbild je Durchlauf über `CopyEFBToTarget`.
+  Die Sperren, der Schatten und die Zustandswiederherstellung bleiben.
+- **Der Bildmitschnitt** schreibt heute je eindeutigem Bild
+  (`FrameDumper::DumpCurrentFrame` mit Bildnummer); für die Messung muss
+  er je Präsentation schreiben.
+
+Kosten, aus den Messungen oben: ein Durchlauf kostet auf dem Null-Backend
++18 Prozent Wanduhr (CPU-Seite). Für 120 Hz aus 30 Hz sind es drei
+Durchläufe je Bild, grob +55 Prozent CPU plus die dreifache Rasterung.
+Ungedrosselt schafft die Messumgebung heute 37 Bilder je Sekunde ohne
+Trockenlauf; für 60 Hz mit einem Zwischenbild reicht das, für 120 Hz
+nicht ohne weitere Beschleunigung des Kerns oder Rasterung auf der
+Grafikkarte (Schritt 6).
+
+**Gebaut** (`MODERNGEKKO_GX_DRYRUN_PRESENT=m`, m = 1 wie bisher, m = 2 für
+120 Hz aus 30 Hz): Je Spielbild 2m Präsentierungen mit t = i/(2m). i = 1
+ist das VI-Feld mit dem neuen Bild, i = m + 1 das VI-Feld mit der
+Wiederholung, i = 2m das echte Bild; die übrigen kommen aus einem
+CoreTiming-Ereignis in emulierter Zeit (`Presenter::PresentIntermediate`,
+Kette: jedes Ereignis meldet das nächste an, das VI-Feld dazwischen die
+Fortsetzung). `SecondPass` ist in `RunPass(t, i)` zerlegt, die Zuordnung
+läuft einmal je Bild, die Zeichenbefehle eines Bildes bleiben bis zur
+nächsten Bildgrenze. Im Zwischenbild-Modus präsentiert der Presenter auch
+Wiederholungen, und der Bildmitschnitt schreibt je Präsentation
+(`[gx-dryrun] mitschnitt=<n> bild=<k> i=<i> t=<t>` im Fehlerkanal nennt zu
+jeder Datei Bild, Durchlauf und t).
+
+**Ein Irrtum in Schritt 4, dabei gefunden:** „Die Wiederholung danach zeigt
+das echte Bild" stimmte nicht — Dolphin überspringt Wiederholungen
+(`SkipDuplicateXFBs`, Voreinstellung an), sie wurden gar nicht
+präsentiert; mit Stufe 4 sah der Bildschirm nur Zwischenbilder, 30 je
+Sekunde. Seit dieser Änderung werden Wiederholungen im Zwischenbild-Modus
+präsentiert.
+
+Gemessen, m = 2, erste 960 Bilder auf Vulkan/Lavapipe, 3.847 Mitschnitte
+für 1.944 VI-Präsentierungen und 1.907 Zwischen-Präsentierungen, 2.854
+Durchläufe, kein Durchlauf vorzeitig beendet, Exit-Code 0. A und B sind
+die echten Bilder k − 1 und k aus demselben Lauf (i = 2m):
+
+| Bild | A→B | t = 0,25: gegen A / gegen B | t = 0,5 | t = 0,75 | im Intervall |
+|---|---|---|---|---|---|
+| 420 (Titel blendet auf) | 20,1 % | 3,4 % / 15,5 % | 9,2 % / 8,6 % | 16,2 % / 2,7 % | 99,6 % |
+| 520 (Blitz, nicht in Matrizen) | 46,3 % | 46,3 % / 0,1 % | 46,3 % / 0,1 % | 46,3 % / 0,1 % | 99,9 % |
+| 600 | 1,1 % | 0,7 % / 0,7 % | 0,9 % / 0,5 % | 1,0 % / 0,3 % | 90–93 % |
+| 800 | 1,3 % | 0,9 % / 0,9 % | 1,0 % / 0,8 % | 1,1 % / 0,6 % | 72–87 % |
+| 900 | 1,8 % | 1,4 % / 1,2 % | 1,6 % / 1,0 % | 1,7 % / 0,7 % | 77–88 % |
+
+Die Abstände wandern mit t: bei 420 von 3,4 auf 16,2 Prozent zu A und von
+15,5 auf 2,7 zu B. Das ist der Beleg für Schritt 5 im Mitschnitt. Was er
+nicht zeigt: die Bildfolge auf einem Monitor mit 120 Hz und ob die
+Emulation die dreifachen Durchläufe in Echtzeit schafft — beides Schritt 6.
+
+## Messung im Spiel: der Flugplatz
+
+Die Eingabefolge `tools/acceptance/fixtures/game-airstrip.json` (neu)
+führt die Startfolge fort: Start-Taste im Vorspann, dann A-Tasten, dann
+Stick — mit Schritten von höchstens 300 Bildern, weil die Sonde je Schritt
+120 s auf die Bestätigung wartet und Lavapipe rund 9 Bilder je Sekunde
+schafft. Ergebnis über 5.113 Bilder auf Vulkan/Lavapipe, Stufe 3: Exit-Code
+0, kein Durchlauf vorzeitig beendet. Der Vorspannfilm läuft bis etwa Bild
+4.050 (die Start-Taste überspringt ihn nicht), dann ein schwarzer
+Übergang, ab etwa Bild 4.300 der Flugplatz von Isle Delfino als Spielszene:
+Peach und Mario, Sprechblase „Mario, be careful!", Kamera steht, nur die
+Figuren atmen. Die Stick-Eingabe bewirkt in der Sprechblase nichts.
+
+| Fenster | Pixel A→B verschieden | Zwischenbild gegen A / gegen B | im Intervall | nur im Zwischenbild |
+|---|---|---|---|---|
+| 2.700–4.050 (Vorspannfilm) | 1,5–10,4 % | = A→B / 0,00 % | 100 % | 0 |
+| 4.350 | 1,62 % | 0,75 % / 0,70 % | 98,9 % | 165 |
+| 4.500–5.100 (fünf Fenster) | 1,54–1,62 % | 0,67–0,75 % / 0,70 % | 99,0 % | 160–162 |
+
+Im Film ändert sich keine Matrix, das Zwischenbild ist Bild B. In der
+Spielszene liegt das Zwischenbild symmetrisch zwischen beiden Nachbarn —
+erste Messung an einer echten 3D-Szene des Spiels, aber ohne Kamerafahrt.
+
+## Messung im Spiel mit Kamerabewegung
+
+`tools/acceptance/fixtures/game-water.json` (neu) führt weiter: acht
+A-Tasten durch die Sprechblasen, dann Stick vor, rechts, zurück. Ab etwa
+Bild 5.400 hat der Spieler die Steuerung (HUD, Peach, Toad, Mario am
+Flugplatz), ab etwa 6.100 läuft Mario ins Wasser und schwimmt, die Kamera
+folgt ihm. 8.145 Bilder auf Vulkan/Lavapipe, Stufe 3, Exit-Code 0, kein
+Durchlauf vorzeitig beendet. Je Fenster A = EFB von Bild n − 1, B = Bild
+n, Zwischenbild = Schatten von Bild n:
+
+| Fenster | Szene | Pixel A→B verschieden | Zwischenbild gegen A / gegen B | im Intervall | nur im Zwischenbild |
+|---|---|---|---|---|---|
+| 4.350–5.100 | Flugplatz, Sprechblase, Kamera steht | 1,6–1,7 % | 0,8 % / 0,7 % | 98,8–99,0 % | 158–162 |
+| 5.250–6.000 | Flugplatz, Steuerung, Kamera steht | 0,9–1,1 % | 0,4–0,6 % / 0,4–0,5 % | 98,8–99,2 % | 72–83 |
+| 6.150 | Mario läuft los | 5,2 % | 4,1 % / 4,0 % | 67,0 % | 261 |
+| 6.300 | Mario läuft ins Wasser | 6,3 % | 5,1 % / 5,1 % | 74,5 % | 332 |
+| 6.450 | Übergang (Schnitt) | 45,2 % | 49,2 % / 22,2 % | 75,2 % | 24.638 |
+| 6.600 | Mario im flachen Wasser, Kamera folgt | 14,7 % | 12,6 % / 9,3 % | 85,5 % | 10.829 |
+| 6.750–6.900 | schwimmen, Kamera folgt | 8,6–10,8 % | 7,0–8,1 % / 1,8–2,5 % | 96,6–96,7 % | 699–939 |
+| 7.050–7.200 | schwimmen an der Kaimauer | 16,5–24,6 % | 12,6–18,8 % / 7,1–12,9 % | 91,6–93,4 % | 6.942–11.202 |
+| 7.350–7.500 | | 4,4–5,2 % | 4,2–5,0 % / 0,2 % | 99,5–99,8 % | 49–54 |
+| 7.650–7.800 | schwimmen, Kamera folgt | 14,9–16,1 % | 12,6–14,4 % / 9,0–10,0 % | 87,1–89,0 % | 10.761–11.085 |
+| 7.950–8.100 | | 14,4–16,7 % | 13,4–15,3 % / 0,9–1,5 % | 98,7–99,2 % | 320–391 |
+
+Bild 7.201 im Einzelnen: 7.781 Zeichenbefehle, alle zugeordnet, 717
+Ladepakete mit 6.995 Wörtern, Projektion unverändert. Im Bildstreifen A,
+Zwischenbild, B steht Mario im Zwischenbild auf halbem Weg, Kaimauer und
+Wasserkante ebenso.
+
+Was die Zahlen sagen: Wo die Kamera fährt und Mario schwimmt, liegt das
+Zwischenbild von beiden Nachbarn verschieden weit entfernt und zu 85 bis
+93 Prozent im Intervall; die Pixel außerhalb und die nur im Zwischenbild
+geänderten sind bewegte Kanten und Wellen, wie auf dem Titel. Die Fenster
+mit „gegen B 0,2 bis 1,5 Prozent" bei 5 bis 17 Prozent Änderung sind
+Bilder, deren Bewegung nicht in den Matrizen steckt — Wasser und
+Wellen kommen aus Vertexdaten und Texturanimation, die im Zwischenbild den
+Stand von B haben. Das ist die bekannte Grenze des Matrixwegs: Er bewegt
+Kamera und Figuren, nicht das, was das Spiel je Bild neu berechnet.
+Beim Losgehen (6.150, 6.300) sind es 67 bis 75 Prozent im Intervall bei
+kleinen Änderungen — Mario dreht sich und die Kamera schwenkt, die
+Spuren im Sand sind Texturen.
+
+**Damit ist Schritt 3 an einer Spielszene mit Kamerafahrt gemessen.**
+Offen bleibt, wie das aussieht, wenn es sich bewegt: Der Bildstreifen ist
+ein Standbild, die 30-Hz-Abfolge aus Zwischenbild und echtem Bild sieht
+nur ein Monitor. Das ist Schritt 6.
 
 ## Was vorab zu prüfen war
 
 **1. Dualcore-Gleichheit — erledigt und bestanden.** Schritt 5 setzt
 `CPUThread = True` voraus, und im ganzen Projektbaum stand dafür bisher kein
-einziger Setzer. Ob der statische Kern mit Rückweg zweifädig genauso rechnet,
+einziger Setzer (Nachtrag vom 2026-09-16: doch, `tools/netplay_session.cpp`;
+und `CPUThread=True` in Dolphin.ini genügt, siehe „Schritt 5:
+Vorabprüfung"). Ob der statische Kern mit Rückweg zweifädig genauso rechnet,
 war offen. Gemessen, je 180 Bilder mit Tonmitschnitt:
 
 | Gegenstand | einfädig | zweifädig |

@@ -50,7 +50,7 @@ So steht in einem Szenario genau das, was wirklich zugesagt wird.
 | Datei | Inhalt |
 |---|---|
 | `boot.json` | Start bis Frame 600 ohne Eingabe. Prüft Arena- und Heapgrenzen gegen die in [10-KOPFLOSER-PRUEFSTAND.md](../../docs/10-KOPFLOSER-PRUEFSTAND.md) belegten Werte, dazu Ton und Zähler. |
-| `spielstart.json` | Eingabefolge bis in die Flugplatz-Sequenz (`fixtures/game-start.json`). Prüft unter anderem, dass `gpMarioAddress` (`0x8040E108`) auf ein Objekt in MEM1 zeigt. |
+| `spielstart.json` | Eingabefolge bis in die Dateiauswahl (`fixtures/game-start.json`; sie endet dort, nicht am Flugplatz — berichtigt am 16.09.2026). Prüft unter anderem, dass `gpMarioAddress` (`0x8040E108`) auf ein Objekt in MEM1 zeigt. |
 | `nativ.json` | Kurzer Start, der **den Anteil nativer Ausführung zusagt**. Braucht den Rückweg, der seit dem 2026-09-16 Voreinstellung ist ([16-RUECKWEG.md](../../docs/16-RUECKWEG.md)); mit `STATICRECOMP_NO_YIELD=1` fällt dasselbe Szenario ausdrücklich durch — sonst wäre die Zusage wertlos. |
 | `widescreen.json` | Eingabefolge bis zur 3D-Szene der Dateiauswahl, dort 20 Bilder als FIFO aufgezeichnet, und sagt das **Sichtverhältnis 1,777778** zu. Gilt für eine mit 16:9 gebackene Spielkopie; gegen eine 64:27-Kopie fällt sie ausdrücklich durch. |
 
@@ -90,3 +90,19 @@ Die Läufe brauchen rund 1, 12 bzw. 1 Minute.
   Tonlänge geraten (3.500 statt 2.401 Bilder, 100 statt 82,6 s); und
   `gpMarioAddress` wurde zunächst an der falschen Adresse gelesen. Genau
   dafür ist der Lauf da.
+
+## `fixtures/game-airstrip.json`
+
+Führt `game-start.json` fort: Start-Taste im Vorspann, A-Tasten, Stick, in
+Schritten von höchstens 300 Bildern (die Sonde wartet je Schritt 120 s auf
+die Bestätigung; auf Lavapipe sind das rund 30 s). Erreicht nach etwa 4.300
+Bildern den Flugplatz von Isle Delfino als Spielszene (Peach, Mario,
+Sprechblase). Keine Zusage, nur Messfolge für docs/20.
+
+## `fixtures/game-water.json`
+
+Führt `game-airstrip.json` fort: acht weitere A-Tasten durch die
+Sprechblasen, dann Stick vor, rechts und zurück (je 300 Bilder). Ab etwa
+Bild 5.400 hat der Spieler die Steuerung, ab etwa 6.100 läuft Mario ins
+Wasser und schwimmt, die Kamera folgt — die erste Folge mit Kamerabewegung
+(docs/20). 8.126 Bilder, auf Lavapipe rund 20 Minuten.

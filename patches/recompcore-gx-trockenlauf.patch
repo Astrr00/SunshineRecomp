@@ -168,20 +168,30 @@
    std::unique_ptr<AbstractPipeline> m_efb_color_resolve_pipeline;
 --- a/Source/Core/VideoCommon/GXDryRun.cpp
 +++ b/Source/Core/VideoCommon/GXDryRun.cpp
-@@ -0,0 +1,631 @@
+@@ -0,0 +1,852 @@
 +#include "VideoCommon/GXDryRun.h"
 +
 +#include <cstdio>
 +#include <cstdlib>
 +#include <cstring>
++#include <memory>
 +#include <string>
 +
 +#include "VideoCommon/DataReader.h"
 +#include "Common/ChunkFile.h"
 +#include "Common/HookableEvent.h"
 +#include "VideoCommon/BPStructs.h"
++#include "Core/CoreTiming.h"
++#include "Core/HW/SystemTimers.h"
++#include "Core/HW/VideoInterface.h"
 +#include "Core/System.h"
++#include "VideoCommon/AsyncRequests.h"
++#include "VideoCommon/Present.h"
++#include "VideoCommon/AbstractFramebuffer.h"
++#include "VideoCommon/AbstractGfx.h"
 +#include "VideoCommon/AbstractTexture.h"
++#include "VideoCommon/TextureCacheBase.h"
++#include "VideoCommon/TextureConfig.h"
 +#include "VideoCommon/BPMemory.h"
 +#include "VideoCommon/BoundingBox.h"
 +#include "VideoCommon/FramebufferManager.h"
@@ -232,7 +242,37 @@
 +bool s_last_was_duplicate = false; // die vorige Praesentation wiederholte ein Bild
 +MathUtil::Rectangle<int> s_frame_src_rect;  // EFB-Ausschnitt der XFB-Kopie des abgeschlossenen Bildes
 +MathUtil::Rectangle<int> s_mid_src_rect;
++// Das Zwischenbild nimmt denselben Kopierweg wie das echte Bild: eine
++// XFB-Kopie (Kopierfilter, Gamma, Zeilenskalierung) vom Schatten in eine
++// eigene Textur. Sonst waeren die beiden Praesentationen eines Bildes
++// verschieden gefiltert und feine Kanten flimmerten mit 30 Hz (docs/20).
++struct XfbCopyParams
++{
++  u32 width = 0, height = 0;
++  float y_scale = 1.0f, gamma = 1.0f;
++  bool clamp_top = false, clamp_bottom = false;
++  CopyFilterCoefficients::Values filter{};
++};
++XfbCopyParams s_frame_xfb;   // Parameter der XFB-Kopie des abgeschlossenen Bildes
++std::unique_ptr<AbstractTexture> s_mid_texture;
++std::unique_ptr<AbstractFramebuffer> s_mid_framebuffer;
++bool s_mid_valid = false;    // s_mid_texture traegt das Zwischenbild dieser Praesentation
 +u64 s_presents = 0, s_presents_duplicate = 0, s_presented_mid = 0;
++// Schritt 5: je Spielbild (zwei VI-Felder) 2*m Praesentierungen mit t = i/(2m),
++// i = 1..2m. i = 1 ist das VI-Feld mit dem neuen Bild, i = m+1 das VI-Feld mit
++// der Wiederholung, i = 2m das echte Bild; die uebrigen kommen aus einem
++// CoreTiming-Ereignis in emulierter Zeit -- deterministisch, die Ausgabe folgt
++// der Emulationsgeschwindigkeit (docs/20, Schritt 5).
++int g_present_multiple = 1;                 // m (MODERNGEKKO_GX_DRYRUN_PRESENT=m)
++CoreTiming::EventType* s_event = nullptr;
++bool s_frame_pending = false;               // abgeschlossenes Bild ist aktuell, Durchlaeufe erlaubt
++bool s_frame_interpolate = false;           // Zuordnung reicht (kein Schnitt)
++bool s_frame_thirty = false;                // Bild kam nach einer Wiederholung (30 Hz)
++bool s_frame_matched = false;               // Zuordnung fuer dieses Bild berechnet
++int s_requested_i = 0;                      // Zwischen-Praesentation i aus dem Ereignis, 0 = VI
++u64 s_passes = 0, s_intermediate_presents = 0;
++int s_current_i = 0;                        // Durchlauf dieser Praesentation (0 = echtes Bild)
++float s_current_t = 1.0f;
 +u64 s_frames = 0;            // zweite Durchlaeufe
 +u64 s_bytes = 0;             // mitgeschriebene Bytes insgesamt
 +u64 s_blocked_bp = 0;        // gesperrte BP-Schreibvorgaenge im zweiten Durchlauf
@@ -422,7 +462,8 @@
 +  std::memcpy(&g_main_cp_state, &from.cp, sizeof(CPState));
 +  std::memcpy(&xfmem, &from.xf, sizeof(XFMemory));
 +  std::memcpy(&bpmem, &from.bp, sizeof(BPMemory));
-+  CopyPreprocessCPStateFromMain();
++  // Kein CopyPreprocessCPStateFromMain: im Zweikernbetrieb gehoert der
++  // Vorverarbeitungsstand dem CPU-Faden, hier laeuft der GPU-Faden.
 +  // Die Verwalter lesen ihren Stand zurueck und markieren sich schmutzig.
 +  std::vector<u8> copy = from.managers;
 +  u8* in = copy.data();
@@ -565,15 +606,29 @@
 +  ++s_blocked_bp;
 +}
 +
++bool PresentsIntermediates()
++{
++  return g_present_mid;
++}
++
++int CurrentPass(float* t)
++{
++  if (t)
++    *t = s_current_t;
++  return s_mid_ready ? s_current_i : 0;
++}
++
++u64 CurrentFrameIndex()
++{
++  return s_frame_index;
++}
++
 +const AbstractTexture* PresentOverride(MathUtil::Rectangle<int>* source_rc)
 +{
-+  if (!s_mid_ready || !g_framebuffer_manager)
-+    return nullptr;
-+  const AbstractTexture* mid = g_framebuffer_manager->GetShadowColorTexture();
-+  if (!mid)
++  if (!s_mid_ready || !s_mid_valid || !s_mid_texture)
 +    return nullptr;
 +  *source_rc = s_mid_src_rect;
-+  return mid;
++  return s_mid_texture.get();
 +}
 +
 +void Record(const u8* data, u32 size)
@@ -612,44 +667,73 @@
 +  s_frame.swap(s_buffer);
 +  s_buffer.clear();
 +  s_frame_ready = true;
++  s_frame_pending = false;
 +  s_frame_index = index;
 +  s_frame_src_rect = MathUtil::Rectangle<int>(
 +      bpmem.copyTexSrcXY.x, bpmem.copyTexSrcXY.y, bpmem.copyTexSrcXY.x + bpmem.copyTexSrcWH.x + 1,
 +      bpmem.copyTexSrcXY.y + bpmem.copyTexSrcWH.y + 1);
++  // Wie BPStructs.cpp fuer die XFB-Kopie: Zeilenzahl aus der Y-Skalierung.
++  {
++    const UPE_Copy copy = bpmem.triggerEFBCopy;
++    const float y_scale = copy.scale_invert ? 256.0f / static_cast<float>(bpmem.dispcopyyscale) :
++                                              static_cast<float>(bpmem.dispcopyyscale) / 256.0f;
++    static constexpr float gamma_lut[4] = {1.0f, 1.7f, 2.2f, 2.2f};
++    s_frame_xfb.width = s_frame_src_rect.GetWidth();
++    s_frame_xfb.height = static_cast<u32>(1.0f + bpmem.copyTexSrcWH.y * y_scale);
++    s_frame_xfb.y_scale = y_scale;
++    s_frame_xfb.gamma = gamma_lut[static_cast<u32>(copy.gamma.Value()) & 3];
++    s_frame_xfb.clamp_top = copy.clamp_top != 0;
++    s_frame_xfb.clamp_bottom = copy.clamp_bottom != 0;
++    s_frame_xfb.filter = bpmem.copyfilter.GetCoefficients();
++  }
 +  CopySnapshot(&s_frame_start, s_start);
 +  Take(&s_start);  // die naechste Mitschrift beginnt mit der XFB-Kopie selbst
 +  if (g_interpolate)
 +  {
++    // A <- bisheriges B, B <- laufende Mitschrift. Die Zeichenbefehle des
++    // Bildes bleiben bis zur naechsten Bildgrenze, weil Schritt 5 mehrere
++    // Durchlaeufe je Bild braucht.
++    s_draws_previous.swap(s_draws_frame);
 +    s_draws_frame.swap(s_draws_current);
 +    s_draws_current.clear();
++    s_frame_matched = false;
 +  }
 +}
 +
-+static void SecondPass(PresentInfo& info)
++// Zuordnung der Zeichenbefehle von B zu A, einmal je Bild.
++static void MatchFrame()
 +{
-+  // Laeuft vor dem Praesentieren (before_present_event), damit das
-+  // Zwischenbild an dessen Stelle treten kann.
-+  const bool duplicate = info.reason == PresentInfo::PresentReason::VideoInterfaceDuplicate;
-+  const bool previous_duplicate = s_last_was_duplicate;
-+  s_last_was_duplicate = duplicate;
-+  ++s_presents;
-+  if (duplicate)
-+    ++s_presents_duplicate;
-+  if (s_presents % 300 == 0)
-+    std::fprintf(stderr, "[gx-dryrun] praesentiert=%llu dup=%llu bilder=%llu mid=%llu\n",
-+                 (unsigned long long)s_presents, (unsigned long long)s_presents_duplicate,
-+                 (unsigned long long)s_frames_done, (unsigned long long)s_presented_mid);
-+  s_mid_ready = false;
-+  if (!s_frame_ready)
-+    return;
-+  s_frame_ready = false;
++  MatchDraws();
++  size_t matched = 0;
++  for (int k : s_match_of_current)
++    matched += k >= 0;
++  const size_t larger = std::max(s_draws_previous.size(), s_draws_frame.size());
++  s_frame_interpolate = larger > 0 && matched * 10 >= larger * 6;  // spike.cut_verdict: share_floor 0.6
++  if (!s_frame_interpolate)
++  {
++    ++s_cuts;
++    std::fill(s_match_of_current.begin(), s_match_of_current.end(), -1);
++  }
++  else
++    ++s_frames_interpolated;
++  s_frame_matched = true;
++}
++
++static std::string PassSuffix(int i)
++{
++  return g_present_multiple > 1 ? "_i" + std::to_string(i) : std::string();
++}
++
++// Ein zweiter Durchlauf des aktuellen Bildes mit Zwischenwert t; danach
++// liegt das Zwischenbild in s_mid_texture (Stufe 4) und ist fuer die
++// anstehende Praesentation gemeldet.
++static void RunPass(float t, int i)
++{
 +  // Der erste Durchlauf hat beim Praesentieren meist schon Vertices des
 +  // naechsten Bildes gesammelt, aber noch nicht gezeichnet. Die muessen
 +  // jetzt in den eigentlichen EFB -- sonst landen sie im Schatten (Stufe 2
 +  // und 3) oder werden mit dem cullall-Stapel verworfen (Stufe 1).
 +  g_vertex_manager->Flush();
-+  // Der zweite Durchlauf laeuft auf demselben Faden wie der erste, nach dem
-+  // Praesentieren. Die Mitschrift enthaelt Display-Listen bereits aufgeloest.
 +  auto& system = Core::System::GetInstance();
 +  // Nichts, was der Gast liest, darf sich aendern: die Bounding Box wird im
 +  // Pixelshader fortgeschrieben, die Pixelzaehler beim Zeichnen.
@@ -660,26 +744,14 @@
 +    g_framebuffer_manager->SwapInShadow();
 +  Take(&s_end);
 +  Apply(s_frame_start);
-+  bool interpolate_this = false;
-+  if (g_interpolate)
-+  {
-+    MatchDraws();
-+    size_t matched = 0;
-+    for (int k : s_match_of_current)
-+      matched += k >= 0;
-+    const size_t larger = std::max(s_draws_previous.size(), s_draws_frame.size());
-+    interpolate_this = larger > 0 && matched * 10 >= larger * 6;  // spike.cut_verdict: share_floor 0.6
-+    if (!interpolate_this)
-+    {
-+      ++s_cuts;
-+      std::fill(s_match_of_current.begin(), s_match_of_current.end(), -1);
-+    }
-+    else
-+      ++s_frames_interpolated;
-+    s_draw_index = 0;
-+  }
++  s_t = t;
++  s_draw_index = 0;
++  s_current_i = i;
++  s_current_t = t;
 +  if (g_interpolate && DumpNow(s_frame_index))
-+    s_draw_log = std::fopen((s_dump_dir + "/draws_" + std::to_string(s_frame_index) + ".txt").c_str(), "w");
++    s_draw_log = std::fopen(
++        (s_dump_dir + "/draws_" + std::to_string(s_frame_index) + PassSuffix(i) + ".txt").c_str(),
++        "w");
 +  g_active = true;
 +  u32 cycles = 0;
 +  DataReader reader(s_frame.data(), s_frame.data() + s_frame.size());
@@ -708,27 +780,158 @@
 +    // Vergleichsbild efb_<n>.png entstand an der Bildgrenze (OnFrameEnd).
 +    if (DumpNow(s_frame_index) &&
 +        g_framebuffer_manager->GetEFBColorTexture()->Save(
-+            s_dump_dir + "/schatten_" + std::to_string(s_frame_index) + ".png", 0))
++            s_dump_dir + "/schatten_" + std::to_string(s_frame_index) + PassSuffix(i) + ".png", 0))
 +      ++s_shadow_dumps;
-+    g_framebuffer_manager->SwapOutShadow();
-+    // Stufe 4: nur ein interpoliertes Bild, nur bei 30 Bildern je Sekunde
-+    // (vorige Praesentation eine Wiederholung, diese ein neues Bild).
-+    if (g_present_mid && interpolate_this && !duplicate && previous_duplicate)
++    // Stufe 4: der Schatten ist noch der aktive EFB -- XFB-Kopie in die
++    // Zwischenbild-Textur, derselbe Kopierweg wie beim echten Bild.
++    s_mid_valid = false;
++    if (g_present_mid && s_frame_xfb.width > 0 && s_frame_xfb.height > 0)
 +    {
-+      s_mid_ready = true;
-+      s_mid_src_rect = s_frame_src_rect;
-+      ++s_presented_mid;
++      const u32 w = g_framebuffer_manager->EFBToScaledX(s_frame_xfb.width);
++      const u32 h = g_framebuffer_manager->EFBToScaledY(s_frame_xfb.height);
++      if (!s_mid_texture || s_mid_texture->GetWidth() != w || s_mid_texture->GetHeight() != h)
++      {
++        s_mid_framebuffer.reset();
++        s_mid_texture = g_gfx->CreateTexture(
++            TextureConfig(w, h, 1, g_framebuffer_manager->GetEFBLayers(), 1,
++                          AbstractTextureFormat::RGBA8, AbstractTextureFlag_RenderTarget,
++                          AbstractTextureType::Texture_2DArray),
++            "GXDryRun Zwischenbild");
++        if (s_mid_texture)
++          s_mid_framebuffer = g_gfx->CreateFramebuffer(s_mid_texture.get(), nullptr);
++      }
++      if (s_mid_texture && s_mid_framebuffer)
++      {
++        const bool linear_filter =
++            g_framebuffer_manager->GetEFBScale() != 1 || s_frame_xfb.y_scale > 1.0f;
++        g_texture_cache->CopyEFBToTarget(s_mid_framebuffer.get(), s_mid_texture.get(),
++                                         s_frame_src_rect, linear_filter, s_frame_xfb.gamma,
++                                         s_frame_xfb.clamp_top, s_frame_xfb.clamp_bottom,
++                                         s_frame_xfb.filter);
++        s_mid_valid = true;
++        s_mid_ready = true;
++        if (DumpNow(s_frame_index))
++          s_mid_texture->Save(
++              s_dump_dir + "/mid_" + std::to_string(s_frame_index) + PassSuffix(i) + ".png", 0);
++        s_mid_src_rect = MathUtil::Rectangle<int>(0, 0, static_cast<int>(w), static_cast<int>(h));
++        ++s_presented_mid;
++      }
 +    }
++    g_framebuffer_manager->SwapOutShadow();
 +  }
 +  Apply(s_end);
 +  if (bbox_was_enabled)
 +    g_bounding_box->Enable(system.GetPixelShaderManager());
 +  ++s_frames;
-+  s_frame.clear();
-+  if (g_interpolate)
++  ++s_passes;
++}
++
++// Takt eines VI-Feldes in Gasttakten.
++static s64 TicksPerField()
++{
++  auto& system = Core::System::GetInstance();
++  auto& vi = system.GetVideoInterface();
++  return static_cast<s64>(system.GetSystemTimers().GetTicksPerSecond()) *
++         vi.GetTargetRefreshRateDenominator() / vi.GetTargetRefreshRateNumerator();
++}
++
++// Naechste Zwischen-Praesentation i in (delay) Gasttakten anmelden. Vom
++// GPU-Faden (FromThread::ANY) und aus dem Ereignis selbst (CPU-Faden).
++static void ScheduleIntermediate(int i, s64 delay, CoreTiming::FromThread from)
++{
++  if (!s_event)
++    return;
++  Core::System::GetInstance().GetCoreTiming().ScheduleEvent(delay, s_event, static_cast<u64>(i),
++                                                            from);
++}
++
++// CoreTiming-Ereignis (CPU-Faden): Zwischen-Praesentation i. Die
++// Praesentation selbst laeuft auf dem GPU-Faden, wie das VI-Feld.
++static void IntermediateEvent(Core::System& system, u64 userdata, s64 cycles_late)
++{
++  const int i = static_cast<int>(userdata);
++  const int m = g_present_multiple;
++  auto& core_timing = system.GetCoreTiming();
++  const u64 ticks = core_timing.GetTicks();
++  const TimePoint presentation_time = core_timing.GetTargetHostTime(ticks);
++  AsyncRequests::GetInstance()->PushEvent([=] {
++    s_requested_i = i;
++    if (g_presenter)
++      g_presenter->PresentIntermediate(ticks, presentation_time);
++    s_requested_i = 0;
++  });
++  // Kette: das naechste Zwischenbild, ausser das naechste ist ein VI-Feld.
++  const int next = i + 1;
++  if (next != m + 1 && next <= 2 * m)
++    ScheduleIntermediate(next, TicksPerField() / m - cycles_late, CoreTiming::FromThread::CPU);
++}
++
++static void SecondPass(PresentInfo& info)
++{
++  // Laeuft vor dem Praesentieren (before_present_event), damit das
++  // Zwischenbild an dessen Stelle treten kann.
++  s_mid_ready = false;
++  s_current_i = 0;
++  s_current_t = 1.0f;
++  const int m = g_present_multiple;
++  const int n = 2 * m;
++  if (s_requested_i > 0)
 +  {
-+    s_draws_previous.swap(s_draws_frame);
-+    s_draws_frame.clear();
++    // Zwischen-Praesentation aus dem Ereignis: i = 2..m und m+2..2m.
++    const int i = s_requested_i;
++    ++s_intermediate_presents;
++    if (s_frame_pending && s_frame_thirty && s_frame_interpolate && i < n)
++      RunPass(static_cast<float>(i) / static_cast<float>(n), i);
++    // i == 2m: das echte Bild, kein Durchlauf, keine Ersetzung.
++    return;
++  }
++  const bool duplicate = info.reason == PresentInfo::PresentReason::VideoInterfaceDuplicate;
++  const bool previous_duplicate = s_last_was_duplicate;
++  s_last_was_duplicate = duplicate;
++  ++s_presents;
++  if (duplicate)
++    ++s_presents_duplicate;
++  if (s_presents % 300 == 0)
++    std::fprintf(stderr, "[gx-dryrun] praesentiert=%llu dup=%llu bilder=%llu mid=%llu\n",
++                 (unsigned long long)s_presents, (unsigned long long)s_presents_duplicate,
++                 (unsigned long long)s_frames_done, (unsigned long long)s_presented_mid);
++  if (duplicate)
++  {
++    // VI-Feld mit Wiederholung: i = m+1, t = (m+1)/(2m). Bei m = 1 ist das
++    // das echte Bild.
++    if (g_present_mid && m > 1 && s_frame_pending && s_frame_thirty && s_frame_interpolate)
++    {
++      RunPass(static_cast<float>(m + 1) / static_cast<float>(n), m + 1);
++      ScheduleIntermediate(m + 2, TicksPerField() / m, CoreTiming::FromThread::ANY);
++    }
++    return;
++  }
++  // VI-Feld mit neuem Bild: i = 1.
++  if (!s_frame_ready)
++  {
++    s_frame_pending = false;
++    return;
++  }
++  s_frame_ready = false;
++  s_frame_pending = true;
++  s_frame_thirty = previous_duplicate;
++  if (g_interpolate && !s_frame_matched)
++    MatchFrame();
++  if (!g_interpolate)
++    s_frame_interpolate = false;
++  if (!g_present_mid)
++  {
++    // Stufen 1 bis 3 ohne Praesentieren: ein Durchlauf bei t = 0,5 wie bisher.
++    RunPass(0.5f, 1);
++    return;
++  }
++  // Stufe 4/5: nur bei 30 Bildern je Sekunde (vorige Praesentation eine
++  // Wiederholung) und nur, wenn die Zuordnung reicht; sonst das echte Bild.
++  if (s_frame_thirty && s_frame_interpolate)
++  {
++    RunPass(1.0f / static_cast<float>(n), 1);
++    if (m > 1)
++      ScheduleIntermediate(2, TicksPerField() / m, CoreTiming::FromThread::ANY);
 +  }
 +}
 +
@@ -739,7 +942,15 @@
 +  g_no_draw = !(stufe && (stufe[0] == '2' || stufe[0] == '3'));
 +  g_interpolate = stufe && stufe[0] == '3';
 +  const char* present = std::getenv("MODERNGEKKO_GX_DRYRUN_PRESENT");
-+  g_present_mid = g_interpolate && present && present[0] == '1';
++  g_present_multiple = present ? std::atoi(present) : 0;
++  if (g_present_multiple > 8)
++    g_present_multiple = 8;
++  g_present_mid = g_interpolate && g_present_multiple >= 1;
++  if (!g_present_mid)
++    g_present_multiple = 1;
++  s_frame_pending = s_frame_interpolate = s_frame_thirty = s_frame_matched = false;
++  s_requested_i = 0;
++  s_passes = s_intermediate_presents = 0;
 +  s_mid_ready = s_last_was_duplicate = false;
 +  s_presents = s_presents_duplicate = s_presented_mid = 0;
 +  if (const char* f = std::getenv("MODERNGEKKO_GX_DRYRUN_DUMP_FROM"))
@@ -764,6 +975,9 @@
 +  Take(&s_start);
 +  s_after_frame =
 +      Core::System::GetInstance().GetVideoEvents().after_frame_event.Register(OnFrameEnd);
++  if (g_present_mid && g_present_multiple > 1 && !s_event)
++    s_event = Core::System::GetInstance().GetCoreTiming().RegisterEvent("GXDryRunZwischenbild",
++                                                                       IntermediateEvent);
 +  s_after_present = Core::System::GetInstance().GetVideoEvents().before_present_event.Register(
 +      SecondPass);
 +}
@@ -772,12 +986,17 @@
 +{
 +  s_after_present.reset();
 +  s_after_frame.reset();
++  if (s_event)
++    Core::System::GetInstance().GetCoreTiming().RemoveEvent(s_event);
++  s_mid_framebuffer.reset();
++  s_mid_texture.reset();
++  s_mid_valid = s_mid_ready = false;
 +  if (g_capture)
 +  {
 +    std::fprintf(stderr,
 +                 "[gx-dryrun] stufe=%d frames=%llu bytes=%llu decoded=%llu blocked_bp=%llu "
 +                 "vertices=%llu/%llu draws=%llu/%llu schattenbilder=%llu kurz=%llu/erster=%llu "
-+                 "bilder=%llu/verworfen=%llu praesentiert=%llu/dup=%llu/mid=%llu "
++                 "bilder=%llu/verworfen=%llu praesentiert=%llu/dup=%llu/mid=%llu m=%d zwischen=%llu durchlaeufe=%llu "
 +                 "interp: frames=%llu cuts=%llu matched=%llu patched=%llu words=%llu schon=%llu proj=%llu\n",
 +                 g_interpolate ? 3 : g_no_draw ? 1 : 2, (unsigned long long)s_frames, (unsigned long long)s_bytes,
 +                 (unsigned long long)s_decoded_bytes, (unsigned long long)s_blocked_bp,
@@ -787,6 +1006,8 @@
 +                 (unsigned long long)s_first_short, (unsigned long long)s_frames_done,
 +                 (unsigned long long)s_frames_dropped, (unsigned long long)s_presents,
 +                 (unsigned long long)s_presents_duplicate, (unsigned long long)s_presented_mid,
++                 g_present_multiple, (unsigned long long)s_intermediate_presents,
++                 (unsigned long long)s_passes,
 +                 (unsigned long long)s_frames_interpolated,
 +                 (unsigned long long)s_cuts, (unsigned long long)s_draws_matched,
 +                 (unsigned long long)s_draws_patched, (unsigned long long)s_words_interpolated,
@@ -802,7 +1023,7 @@
 +}  // namespace GXDryRun
 --- a/Source/Core/VideoCommon/GXDryRun.h
 +++ b/Source/Core/VideoCommon/GXDryRun.h
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,67 @@
 +// Trockenlauf des GX-Befehlsstroms (WP14, Schritt 1; docs/20-VARIABLE-BILDRATE.md).
 +//
 +// Mit MODERNGEKKO_GX_DRYRUN=1 wird der Befehlsstrom jedes Bildes mitgeschrieben
@@ -862,6 +1083,13 @@
 +// Ausgaberate bleibt. Liefert das Zwischenbild und setzt source_rc auf den
 +// EFB-Ausschnitt der XFB-Kopie, sonst nullptr.
 +const AbstractTexture* PresentOverride(MathUtil::Rectangle<int>* source_rc);
++// Stufe 4/5 aktiv: der Presenter zeigt dann auch Wiederholungen (sonst
++// uebersprungen, SkipDuplicateXFBs), weil erst die das echte Bild tragen.
++bool PresentsIntermediates();
++// Durchlauf i der anstehenden Praesentation (0 = echtes Bild) und sein t;
++// Nummer des Bildes, das gerade praesentiert wird (Zaehlung der XFB-Kopien).
++int CurrentPass(float* t);
++u64 CurrentFrameIndex();
 +}  // namespace GXDryRun
 --- a/Source/Core/VideoCommon/OpcodeDecoding.cpp
 +++ b/Source/Core/VideoCommon/OpcodeDecoding.cpp
@@ -889,15 +1117,58 @@
  
 --- a/Source/Core/VideoCommon/Present.cpp
 +++ b/Source/Core/VideoCommon/Present.cpp
-@@ -16,6 +16,7 @@
+@@ -16,6 +16,8 @@
  #include "Present.h"
  #include "VideoCommon/AbstractGfx.h"
  #include "VideoCommon/FrameDumper.h"
++#include <cstdio>
 +#include "VideoCommon/GXDryRun.h"
  #include "VideoCommon/FramebufferManager.h"
  #include "VideoCommon/OnScreenUI.h"
  #include "VideoCommon/PostProcessing.h"
-@@ -315,8 +316,12 @@
+@@ -210,15 +212,39 @@
+ 
+   video_events.before_present_event.Trigger(present_info);
+ 
+-  if (!is_duplicate || !g_ActiveConfig.bSkipPresentingDuplicateXFBs)
++  // Trockenlauf Stufe 4/5 (WP14): Wiederholungen werden praesentiert, weil
++  // erst sie das echte Bild tragen, wenn das neue Bild durch ein Zwischenbild
++  // ersetzt wurde.
++  if (!is_duplicate || !g_ActiveConfig.bSkipPresentingDuplicateXFBs ||
++      GXDryRun::PresentsIntermediates())
+   {
+     Present(&present_info);
+     ProcessFrameDumping(ticks);
+-
+     video_events.after_present_event.Trigger(present_info);
+   }
+ }
+ 
++// Trockenlauf Stufe 5 (WP14): eine Praesentation zwischen zwei VI-Feldern,
++// aus einem CoreTiming-Ereignis. Der Inhalt kommt aus GXDryRun::PresentOverride
++// (ein Zwischenbild) oder ist das aktuelle XFB (das echte Bild).
++void Presenter::PresentIntermediate(u64 ticks, TimePoint presentation_time)
++{
++  if (!m_xfb_entry)
++    return;
++  PresentInfo present_info{
++      .frame_count = m_frame_count - 1,
++      .present_count = m_present_count++,
++      .reason = PresentInfo::PresentReason::Immediate,
++      .emulated_timestamp = ticks,
++      .intended_present_time = presentation_time,
++  };
++  auto& video_events = GetVideoEvents();
++  video_events.before_present_event.Trigger(present_info);
++  Present(&present_info);
++  ProcessFrameDumping(ticks);
++  video_events.after_present_event.Trigger(present_info);
++}
++
+ void Presenter::ImmediateSwap(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_height)
+ {
+   if (m_immediate_swap_happened_this_field.exchange(true, std::memory_order_relaxed) &&
+@@ -315,8 +341,25 @@
  
      // TODO: any scaling done by this won't be gamma corrected,
      // we should either apply post processing as well, or port its gamma correction code
@@ -909,10 +1180,23 @@
 +    if (const AbstractTexture* mid = GXDryRun::PresentOverride(&dump_rect))
 +      dump_texture = mid;
 +    g_frame_dumper->DumpCurrentFrame(dump_texture, dump_rect, target_rect, ticks, m_frame_count);
++    // Trockenlauf Stufe 4/5 (WP14): ein Bild je Praesentation, nicht je
++    // Bildgrenze -- sonst ueberschreiben sich Zwischenbild und echtes Bild.
++    if (GXDryRun::PresentsIntermediates())
++    {
++      float t = 1.0f;
++      const int i = GXDryRun::CurrentPass(&t);
++      // Laufende Nummer = Dateinummer des Mitschnitts (der Zaehler des
++      // FrameDumper zaehlt erst auf seinem Schreibfaden hoch).
++      static unsigned long long s_dry_run_dumps = 0;
++      std::fprintf(stderr, "[gx-dryrun] mitschnitt=%llu bild=%llu i=%d t=%.3f\n", ++s_dry_run_dumps,
++                   (unsigned long long)GXDryRun::CurrentFrameIndex(), i, t);
++      g_frame_dumper->FlushFrameDump();
++    }
    }
  }
  
-@@ -938,9 +943,13 @@
+@@ -938,9 +981,13 @@
      // Adjust the source rectangle instead of using an oversized viewport to render the XFB.
      MathUtil::Rectangle<int> render_target_rc = GetTargetRectangle();
      MathUtil::Rectangle<int> render_source_rc = AdjustForCustomCrop(m_xfb_rect);
@@ -927,6 +1211,104 @@
    }
  
    if (m_onscreen_ui)
+--- a/Source/Core/VideoCommon/Present.h
++++ b/Source/Core/VideoCommon/Present.h
+@@ -38,6 +38,8 @@
+   void ViSwap(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_height, u64 ticks,
+               TimePoint presentation_time);
+   void ImmediateSwap(u32 xfb_addr, u32 fb_width, u32 fb_stride, u32 fb_height);
++  // Trockenlauf Stufe 5 (WP14): Praesentation zwischen zwei VI-Feldern.
++  void PresentIntermediate(u64 ticks, TimePoint presentation_time);
+ 
+   void SetNextSwapEstimatedTime(u64 ticks, TimePoint host_time);
+ 
+--- a/Source/Core/VideoCommon/TextureCacheBase.cpp
++++ b/Source/Core/VideoCommon/TextureCacheBase.cpp
+@@ -2836,6 +2836,67 @@
+   return true;
+ }
+ 
++void TextureCacheBase::CopyEFBToTarget(AbstractFramebuffer* framebuffer, AbstractTexture* texture,
++                                       const MathUtil::Rectangle<int>& src_rect,
++                                       bool linear_filter, float gamma, bool clamp_top,
++                                       bool clamp_bottom,
++                                       const CopyFilterCoefficients::Values& coefficients)
++{
++  // Nachbau von CopyEFBToCacheEntry fuer den Farbfall der XFB-Kopie.
++  const std::array<u32, 3> filter_coefficients = GetVRAMCopyFilterCoefficients(coefficients);
++  g_framebuffer_manager->FlushEFBPokes();
++  const AbstractPipeline* copy_pipeline = g_shader_cache->GetEFBCopyToVRAMPipeline(
++      TextureConversionShaderGen::GetShaderUid(EFBCopyFormat::XFB, false, false, false,
++                                               1.0f / gamma, filter_coefficients));
++  if (!copy_pipeline)
++  {
++    WARN_LOG_FMT(VIDEO, "Skipping EFB copy to target due to missing pipeline.");
++    return;
++  }
++  const auto scaled_src_rect = g_framebuffer_manager->ConvertEFBRectangle(src_rect);
++  const auto framebuffer_rect = g_gfx->ConvertFramebufferRectangle(
++      scaled_src_rect, g_framebuffer_manager->GetEFBFramebuffer());
++  AbstractTexture* src_texture = g_framebuffer_manager->ResolveEFBColorTexture(framebuffer_rect);
++  g_gfx->BeginUtilityDrawing();
++  src_texture->FinishedRendering();
++  struct Uniforms
++  {
++    float src_left, src_top, src_width, src_height;
++    std::array<u32, 3> filter_coefficients;
++    float gamma_rcp;
++    float clamp_top;
++    float clamp_bottom;
++    float pixel_height;
++    u32 padding;
++  };
++  Uniforms uniforms;
++  const float rcp_efb_width = 1.0f / static_cast<float>(g_framebuffer_manager->GetEFBWidth());
++  const u32 efb_height = g_framebuffer_manager->GetEFBHeight();
++  const float rcp_efb_height = 1.0f / static_cast<float>(efb_height);
++  uniforms.src_left = framebuffer_rect.left * rcp_efb_width;
++  uniforms.src_top = framebuffer_rect.top * rcp_efb_height;
++  uniforms.src_width = framebuffer_rect.GetWidth() * rcp_efb_width;
++  uniforms.src_height = framebuffer_rect.GetHeight() * rcp_efb_height;
++  uniforms.filter_coefficients = filter_coefficients;
++  uniforms.gamma_rcp = 1.0f / gamma;
++  const u32 top_coord = clamp_top ? framebuffer_rect.top : 0;
++  uniforms.clamp_top = (static_cast<float>(top_coord) + .5f) * rcp_efb_height;
++  const u32 bottom_coord = (clamp_bottom ? framebuffer_rect.bottom : efb_height) - 1;
++  uniforms.clamp_bottom = (static_cast<float>(bottom_coord) + .5f) * rcp_efb_height;
++  uniforms.pixel_height = g_ActiveConfig.bCopyEFBScaled ? rcp_efb_height : 1.0f / EFB_HEIGHT;
++  uniforms.padding = 0;
++  g_vertex_manager->UploadUtilityUniforms(&uniforms, sizeof(uniforms));
++  g_gfx->SetAndDiscardFramebuffer(framebuffer);
++  g_gfx->SetViewportAndScissor(framebuffer->GetRect());
++  g_gfx->SetPipeline(copy_pipeline);
++  g_gfx->SetTexture(0, src_texture);
++  g_gfx->SetSamplerState(0, linear_filter ? RenderState::GetLinearSamplerState() :
++                                            RenderState::GetPointSamplerState());
++  g_gfx->Draw(0, 3);
++  g_gfx->EndUtilityDrawing();
++  texture->FinishedRendering();
++}
++
+ void TextureCacheBase::CopyEFBToCacheEntry(RcTcacheEntry& entry, bool is_depth_copy,
+                                            const MathUtil::Rectangle<int>& src_rect,
+                                            bool scale_by_half, bool linear_filter,
+--- a/Source/Core/VideoCommon/TextureCacheBase.h
++++ b/Source/Core/VideoCommon/TextureCacheBase.h
+@@ -285,6 +285,14 @@
+                               MathUtil::Rectangle<int>* display_rect);
+ 
+   virtual void BindTextures(BitSet32 used_textures, const std::array<SamplerState, 8>& samplers);
++  // Trockenlauf (WP14, Schritt 4): dieselbe Farbkopie wie fuer den XFB, aber in
++  // ein fremdes Ziel -- kein Cache-Eintrag, kein RAM. Vom Schatten-EFB zum
++  // Zwischenbild, damit beide Praesentationen eines Bildes gleich gefiltert sind.
++  void CopyEFBToTarget(AbstractFramebuffer* framebuffer, AbstractTexture* texture,
++                       const MathUtil::Rectangle<int>& src_rect, bool linear_filter, float gamma,
++                       bool clamp_top, bool clamp_bottom,
++                       const CopyFilterCoefficients::Values& filter_coefficients);
++
+   void CopyRenderTargetToTexture(u32 dstAddr, EFBCopyFormat dstFormat, u32 width, u32 height,
+                                  u32 dstStride, bool is_depth_copy,
+                                  const MathUtil::Rectangle<int>& srcRect, bool isIntensity,
 --- a/Source/Core/VideoCommon/VertexLoaderManager.cpp
 +++ b/Source/Core/VideoCommon/VertexLoaderManager.cpp
 @@ -3,6 +3,8 @@
