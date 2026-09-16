@@ -79,6 +79,11 @@ gemeinsames Ende plus ein Fenster von ±32 — **nicht** die vollständige
 LCS-Tabelle aus `spike.py`, die bei 8.817 Zeichenbefehlen 77,7 Millionen Felder
 materialisieren würde.
 
+> **Nachtrag vom 2026-09-16:** gebaut und gemessen, Abschnitt „Schritt 3:
+> gebaut und gemessen". Abweichend vom Plan mit der vollen LCS-Tabelle,
+> begrenzt auf 1.500 × 1.500 Felder à 2 Byte; was darüber liegt, wird nur
+> über Anfang und Ende zugeordnet.
+
 **4. Das Zwischenbild wird sichtbar**, bei unveränderter Ausgaberate. Enthält
 die Zählerbereinigung aus dem Befund oben. Ab hier ist erstmals ein Bild zu
 prüfen.
@@ -110,6 +115,11 @@ sperren muss:
 | `BPMEM_LOADTLUT0`, `BPMEM_LOADTLUT1` | lesen Gast-RAM in den TMEM | `:397` |
 | `BPMEM_TEXINVALIDATE`, `BPMEM_PRELOAD_MODE` | Zustand des Texturspeichers | `:594` |
 | `BPMEM_CLEAR_PIXEL_PERF` | setzt die Pixel-Zähler, die der Gast liest | `:582` |
+
+> **Nachtrag vom 2026-09-16:** `BPMEM_TRIGGER_EFB_COPY` wird seit der
+> Berichtigung der Bildgrenze (Abschnitt „Nachtrag zu Schritt 2") nicht
+> mehr gesperrt, sondern gesondert behandelt: keine Kopie, aber ihr Löschen.
+> Gesperrt bleiben die zehn übrigen.
 
 Dazu kommt der indizierte XF-Ladeweg: `LoadIndexedXF` liest zur
 Ausführungszeit lebenden Gast-RAM (`XFStructs.cpp:281-286`) — für den
@@ -250,6 +260,148 @@ während der Schatten genau das eine Bild zeigt; Bild 600 fällt in den
 Titelbildschirm mit bewegten Elementen. **Schritt 2 ist damit erbracht**:
 Der zweite Durchlauf zeichnet wirklich, in ein eigenes Paar, und der Gast
 merkt nichts davon.
+
+## Nachtrag zu Schritt 2: die Bildgrenze war falsch
+
+Stand: 2026-09-16, gemessen.
+
+Die Mitschrift eines „Bildes" reichte bisher von einem Präsentieren zum
+nächsten (`after_present_event`). Das ist nicht die Bildgrenze des Spiels.
+Beleg: Zum Zeitpunkt des Präsentierens zeigt der eigentliche EFB in der
+Dateiauswahl Himmel, Palme und Mario, aber **kein HUD** — das Spiel hat mit
+dem nächsten Bild schon begonnen, bevor das Präsentieren kommt, und ist noch
+nicht beim HUD. Die Mitschrift enthielt damit den Schluss eines Bildes (das
+HUD) und den Anfang des nächsten; der Schatten zeichnete beides in ein Bild,
+das HUD über den geleerten Schatten statt über die Szene. Daher rührten die
+6 Prozent verschiedener Pixel in der Dateiauswahl der Schritt-2-Tabelle,
+nicht aus dem Zweikernbetrieb, wie dort vermutet — der ist hier gar nicht
+an. Auch die 0,44 Prozent von A nach B geänderter Pixel, mit denen die
+erste Messung der Stufe 3 die Dateiauswahl als „kaum bewegt" einstufte,
+verglichen zwei halbe Bilder.
+
+Die Bildgrenze ist die XFB-Kopie. Dolphin löst dort `after_frame_event`
+aus (`BPStructs.cpp`: „This is as closest as we have to an end of the
+frame"), nach der Kopie und vor dem Löschen, das die Kopie auslösen kann.
+Die Mitschrift wird jetzt dort geschnitten; das abgeschlossene Bild wartet
+auf das nächste Präsentieren und läuft dann ein zweites Mal. Der Befehl der
+XFB-Kopie selbst steht am Anfang der nächsten Mitschrift (der Dekodierer
+meldet einen Befehl erst nach dessen Ausführung) und wird im zweiten
+Durchlauf gesondert behandelt: keine Kopie — weder Texturcache noch RAM
+noch XFB, und kein `after_frame_event` —, aber das Löschen, damit der
+Schatten so beginnt wie der EFB. Dasselbe gilt für EFB-Kopien mitten im
+Bild. Die Sperrliste hat damit zehn Register; die Kopie ist der elfte Fall
+mit eigener Behandlung. Das Vergleichsbild `efb_<n>.png` entsteht seither
+an der Bildgrenze, nicht mehr beim Präsentieren; `<n>` zählt XFB-Kopien.
+
+Mit dieser Grenze, Stufe 3 aktiv, ganze Eingabefolge auf Vulkan/Lavapipe:
+2.084 abgeschlossene Bilder bei 2.082 Präsentierungen, keines verworfen
+(zwei Kopien zwischen zwei Präsentierungen zählt der Zähler `verworfen`).
+Schatten gegen eigentlichen EFB **desselben Bildes**, alle 60 Bilder:
+
+| Bilder | mittlere Abweichung je Kanal | Pixel verschieden |
+|---|---|---|
+| 0–360 (Vorspann) | 0,00 | 0,0 % |
+| 420 (Aufblenden des Titels) | 1,78 | 12,3 % |
+| 480–1.500 (Titel) | 0,07–0,33 | 0,0–0,9 % |
+| 1.560 (Übergang zur Dateiauswahl) | 4,89 | 11,8 % |
+| 1.620–2.040 (Dateiauswahl) | 0,12–1,21 | 0,2–2,0 % |
+
+Die Werte enthalten die Interpolation der Stufe 3: Der Schatten ist das
+Zwischenbild, der EFB das Bild B, und in der Dateiauswahl bewegen sich
+Mario, das Wasser und der pulsierende START-Schriftzug. Die beiden
+Ausreißer liegen in Überblendungen; woran es dort liegt, ist nicht
+untersucht. Naheliegend, aber Vermutung: Kopiert das Spiel innerhalb eines
+Bildes mehrfach aus dem EFB und zeichnet die Kopie zurück, hält der
+Texturcache im zweiten Durchlauf den Stand vom Ende des ersten, nicht den
+vom jeweiligen Zeichenbefehl, weil die Kopie gesperrt ist.
+
+## Schritt 3: gebaut und gemessen
+
+`MODERNGEKKO_GX_DRYRUN=3`. Der Vertexlader meldet jeden Zeichenbefehl mit
+Signatur (Primitiv, VAT, Vertexzahl, Vertexgröße, Positionsformat, Matrix
+je Vertex) und dem XF-Matrixstand zu diesem Zeitpunkt: 0x000–0x0FF,
+0x400–0x45F, 0x500–0x5FF und die Projektion 0x1020–0x1026, 608 + 7 Wörter.
+Das sind die aufgelösten Werte: Was der indizierte Ladeweg aus dem Gast-RAM
+geholt hat, steht in diesem Moment im XF-Speicher. Vor dem zweiten
+Durchlauf von Bild B werden dessen Zeichenbefehle denen von A zugeordnet
+(gemeinsamer Anfang und gemeinsames Ende direkt, der Rest per längster
+gemeinsamer Teilfolge, Tabelle bis 1.500 × 1.500); Schnitt, wenn weniger
+als 60 Prozent zugeordnet sind (Schwelle aus dem Spike). Vor jedem
+zugeordneten Zeichenbefehl werden die Wörter, die sich von A nach B
+geändert haben, über den regulären Weg (`LoadXFReg`, mit Flush und
+Schmutzmarkierung) auf den Zwischenwert t = 0,5 gesetzt; die Projektion
+nur, wenn ihr Typ gleich blieb.
+
+**Ein Fehler beim ersten Bauen.** Geladen wurde vor jedem zugeordneten
+Zeichenbefehl, auch wenn der Zwischenwert schon anlag. Jedes Laden erzwingt
+einen Flush; der zweite Durchlauf hatte dadurch zehnmal so viele
+Zeichenaufrufe wie der erste (3.783.741 gegen 375.146 über die
+Eingabefolge). Seit der zweite Durchlauf den lebenden XF-Speicher
+vergleicht und nur lädt, was noch nicht anliegt, sind die Zeichenaufrufe
+gleich; von 840 Millionen geänderten Wörtern brauchten 8,8 Millionen ein
+Laden.
+
+Ganze Eingabefolge, Vulkan/Lavapipe, Bildgrenze an der XFB-Kopie:
+
+| | Wert |
+|---|---|
+| zweite Durchläufe / vorzeitig beendet | 2.083 / 0 |
+| Bilder interpoliert / Schnitte | 2.055 / 28 |
+| Zeichenaufrufe zweiter / erster Durchlauf | 334.731 / 334.907 |
+| zugeordnete Zeichenbefehle | 4.236.205 |
+| davon mit geladenen Wörtern | 157.766 (77 je Bild) |
+| geladene Wörter / schon anliegend | 8.807.458 / 839.837.036 |
+| Projektion geladen | 1 |
+| `smc_failed` | 0 |
+
+**Liegt das Zwischenbild zwischen den Nachbarn?** Dateiauswahl, Bilder
+1.880 bis 1.887: Mario steht am Strand und atmet, das Wasser läuft, der
+START-Schriftzug pulsiert. A ist der eigentliche EFB von Bild n − 1, B der
+von Bild n, das Zwischenbild der Schatten von Bild n (`tools/framerate
+compare A mid B`):
+
+| Bild | Pixel A→B verschieden | davon im Intervall [A, B] ± 8 | außerhalb | nur im Zwischenbild verschieden |
+|---|---|---|---|---|
+| 1.881 | 7.945 (2,35 %) | 5.997 (75,5 %) | 1.948 | 361 |
+| 1.883 | 6.415 (1,90 %) | 4.946 (77,1 %) | 1.469 | 263 |
+| 1.885 | 6.142 (1,82 %) | 4.719 (76,8 %) | 1.423 | 413 |
+| 1.887 | 5.877 (1,74 %) | 4.506 (76,7 %) | 1.371 | 326 |
+
+Zum Vergleich die erste Messung mit der falschen Bildgrenze (Bilder 1.901
+bis 1.905): 92 bis 94 Prozent im Intervall, aber 19.300 Pixel, die nur im
+Zwischenbild anders waren — das HUD über dem geleerten Schatten. Jetzt sind
+es 263 bis 413.
+
+Drei Befunde aus den Bildern selbst:
+
+- Das Zwischenbild liegt näher an B als an A (mittlere Abweichung 0,48
+  gegen 0,70 je Kanal bei Bild 1.881). Was nicht in Matrizen steckt — die
+  Texturanimation des Wassers, die Vertexdaten selbst —, hat im
+  Zwischenbild den Stand von B, weil der Strom von B läuft.
+- Von den Pixeln außerhalb des Intervalls liegen 88 bis 97 Prozent im
+  START-Schriftzug. Der schrumpft von A nach B; im Zwischenbild steht er auf
+  halbem Weg, und ein Pixel, das in A Schrift und in B Himmel ist, ist dort
+  oft Umriss, weder das eine noch das andere. Das Pixelmaß ist für bewegte
+  Kanten zu grob. Mario zeigt im vergrößerten Ausschnitt eine plausible
+  Zwischenstellung; von seinen Pixeln liegen 95 Prozent im Intervall.
+- Einen Strahlenkranz, den A um den Schriftzug zeichnet und B nicht mehr,
+  hat das Zwischenbild nicht: Was nur A zeichnet, gibt es im Strom von B
+  nicht.
+
+**Was Schritt 3 nicht belegt.** Eine Szene mit Kamerabewegung gibt die
+Eingabefolge nicht her, sie endet in der Dateiauswahl. Die 900 Bilder
+danach (eigene, nicht eingecheckte Folge) zeigen den Vorspannfilm: dort
+ändert sich keine Matrix, das Zwischenbild ist Pixel für Pixel Bild B — der
+Weg über Matrizen interpoliert keinen Film. Eine Messung im Spiel braucht
+eine Eingabefolge, die durch Film und Landung ins Spiel läuft, und dann
+Schritt 4, der das Zwischenbild überhaupt sichtbar macht.
+
+**Absturz beim Beenden.** Mit Trockenlauf (Stufe 2 oder 3) auf Vulkan endet
+die Laufzeit beim Beenden mit Signal 11 oder mit `free(): invalid next
+size` (Signal 6), nach dem Schreiben aller Zähler, in
+`InputConfig::ClearControllers` — fern vom Trockenlauf. Ohne Trockenlauf
+auf Vulkan und mit Trockenlauf auf dem Null-Backend nicht. Das ist eine
+Heap-Beschädigung; die Ursache ist offen, ein valgrind-Lauf läuft.
 
 ## Was vorab zu prüfen war
 

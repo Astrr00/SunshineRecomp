@@ -21,6 +21,21 @@
    if (((s32*)&bpmem)[bp.address] == bp.newvalue)
    {
      if (!(bp.address == BPMEM_TRIGGER_EFB_COPY || bp.address == BPMEM_CLEARBBOX1 ||
+@@ -298,7 +305,13 @@
+     const u32 copy_width = srcRect.GetWidth();
+     const u32 copy_height = srcRect.GetHeight();
+ 
+-    if (destStride != 0)
++    // Trockenlauf (WP14): im zweiten Durchlauf keine Kopie -- weder in den
++    // Texturcache noch in den RAM noch als XFB (samt after_frame_event) --,
++    // aber das Loeschen unten, damit der Schatten wie der EFB beginnt.
++    if (GXDryRun::g_active)
++      GXDryRun::NoteBlockedCopy();
++
++    if (destStride != 0 && !GXDryRun::g_active)
+     {
+       // Check if we are to copy from the EFB or draw to the XFB
+       if (PE_copy.copy_to_xfb == 0)
 --- a/Source/Core/VideoCommon/CMakeLists.txt
 +++ b/Source/Core/VideoCommon/CMakeLists.txt
 @@ -66,6 +66,8 @@
@@ -138,7 +153,7 @@
    std::unique_ptr<AbstractPipeline> m_efb_color_resolve_pipeline;
 --- a/Source/Core/VideoCommon/GXDryRun.cpp
 +++ b/Source/Core/VideoCommon/GXDryRun.cpp
-@@ -0,0 +1,436 @@
+@@ -0,0 +1,541 @@
 +#include "VideoCommon/GXDryRun.h"
 +
 +#include <cstdio>
@@ -180,6 +195,19 @@
 +{
 +std::vector<u8> s_buffer;
 +Common::EventHook s_after_present;
++Common::EventHook s_after_frame;
++// Bildgrenze ist die XFB-Kopie (after_frame_event), nicht das Praesentieren:
++// Das Praesentieren faellt mitten in das Zeichnen des naechsten Bildes
++// (gemessen: der EFB zeigt beim Praesentieren Himmel und Palme des naechsten
++// Bildes, aber noch kein HUD; docs/20). Der Strom eines Bildes reicht daher
++// vom Befehl nach der XFB-Kopie bis zum Befehl vor der naechsten; die
++// XFB-Kopie selbst eroeffnet als erster Befehl das naechste Bild und leert im
++// zweiten Durchlauf nur den Schatten (BPStructs.cpp).
++std::vector<u8> s_frame;     // abgeschlossenes Bild, wartet auf den zweiten Durchlauf
++bool s_frame_ready = false;
++u64 s_frame_index = 0;       // Nummer des abgeschlossenen Bildes (Zaehlung der XFB-Kopien)
++u64 s_frames_done = 0;       // abgeschlossene Bilder (XFB-Kopien im ersten Durchlauf)
++u64 s_frames_dropped = 0;    // abgeschlossen, aber vor dem naechsten Praesentieren ueberschrieben
 +u64 s_frames = 0;            // zweite Durchlaeufe
 +u64 s_bytes = 0;             // mitgeschriebene Bytes insgesamt
 +u64 s_blocked_bp = 0;        // gesperrte BP-Schreibvorgaenge im zweiten Durchlauf
@@ -207,13 +235,17 @@
 +  std::array<u32, kProjectionWords> projection;
 +};
 +std::vector<DrawRecord> s_draws_previous;   // Bild A
-+std::vector<DrawRecord> s_draws_current;    // Bild B, waehrend der Mitschrift
++std::vector<DrawRecord> s_draws_current;    // laufende Mitschrift
++std::vector<DrawRecord> s_draws_frame;      // Bild B, abgeschlossen, wartet auf den zweiten Durchlauf
 +std::vector<int> s_match_of_current;        // je Zeichenbefehl von B: Index in A oder -1
 +u64 s_draw_index = 0;                       // laufender Zeichenbefehl im zweiten Durchlauf
 +u64 s_frames_interpolated = 0, s_draws_matched = 0, s_draws_patched = 0, s_words_interpolated = 0,
 +    s_cuts = 0, s_projection_patched = 0;
++u64 s_words_already = 0;    // geaenderte Woerter, deren Zwischenwert schon anlag (kein Laden)
++std::FILE* s_draw_log = nullptr;  // je Fensterbild: Zuordnung und geladene Woerter (Diagnose)
 +float s_t = 0.5f;
 +u64 s_dump_from = 0, s_dump_count = 0;      // MODERNGEKKO_GX_DRYRUN_DUMP_FROM / _COUNT
++u64 s_dump_every = 0;                       // MODERNGEKKO_GX_DRYRUN_DUMP_EVERY: Fenster alle N Bilder
 +
 +void TakeMatrices(DrawRecord* r)
 +{
@@ -245,7 +277,7 @@
 +void MatchDraws()
 +{
 +  const auto& a = s_draws_previous;
-+  const auto& b = s_draws_current;
++  const auto& b = s_draws_frame;
 +  s_match_of_current.assign(b.size(), -1);
 +  size_t head = 0;
 +  while (head < a.size() && head < b.size() && a[head].signature == b[head].signature)
@@ -318,6 +350,7 @@
 +};
 +Snapshot s_start;   // Stand am Anfang der laufenden Mitschrift
 +Snapshot s_end;     // Stand am Ende, wird nach dem zweiten Durchlauf zurueckgesetzt
++Snapshot s_frame_start;  // Stand am Anfang des abgeschlossenen Bildes
 +
 +void Take(Snapshot* into)
 +{
@@ -366,10 +399,15 @@
 +  }
 +  // Zweiter Durchlauf von B: Zeichenbefehl j.
 +  const size_t j = static_cast<size_t>(s_draw_index++);
-+  if (j >= s_match_of_current.size() || s_match_of_current[j] < 0)
++  const bool matched = j < s_match_of_current.size() && s_match_of_current[j] >= 0;
++  if (s_draw_log)
++    std::fprintf(s_draw_log, "draw %zu match %d sig %d %d %d %d %d %d\n", j,
++                 matched ? s_match_of_current[j] : -1, primitive, vat, count, vertex_size, pos_kind,
++                 per_vertex_matrix ? 1 : 0);
++  if (!matched)
 +    return;
 +  const DrawRecord& da = s_draws_previous[static_cast<size_t>(s_match_of_current[j])];
-+  const DrawRecord& db = s_draws_current[j];
++  const DrawRecord& db = s_draws_frame[j];
 +  ++s_draws_matched;
 +  // Geaenderte Woerter als zusammenhaengende Pakete laden.
 +  bool patched = false;
@@ -378,6 +416,13 @@
 +  auto flush_run = [&]() {
 +    if (run_start >= 0)
 +    {
++      if (s_draw_log)
++      {
++        std::fprintf(s_draw_log, "  load 0x%03X n=%zu:", SnapshotAddress(run_start), run.size());
++        for (size_t k = 0; k < run.size(); ++k)
++          std::fprintf(s_draw_log, " %08X/%08X/%08X", da.matrices[run_start + k], db.matrices[run_start + k], run[k]);
++        std::fprintf(s_draw_log, "\n");
++      }
 +      LoadWords(SnapshotAddress(run_start), run);
 +      s_words_interpolated += run.size();
 +      patched = true;
@@ -385,18 +430,32 @@
 +    run_start = -1;
 +    run.clear();
 +  };
++  // Geladen wird nur, was sich von A nach B geaendert hat UND noch nicht
++  // anliegt: Das Spiel laedt Matrizen nicht vor jedem Zeichenbefehl neu, der
++  // vorige zugeordnete Zeichenbefehl hat den Zwischenwert also meist schon
++  // gesetzt -- und jedes Laden erzwingt einen Flush. Ohne diese Pruefung
++  // hatte der zweite Durchlauf zehnmal so viele Zeichenaufrufe wie der erste
++  // (3,78 Millionen statt 375 Tausend, docs/20).
++  const u32* live = reinterpret_cast<const u32*>(&xfmem);
 +  for (int i = 0; i < kSnapshotWords; ++i)
 +  {
-+    if (da.matrices[i] != db.matrices[i])
++    const bool changed = da.matrices[i] != db.matrices[i];
++    const u32 wanted = changed ? LerpWords(da.matrices[i], db.matrices[i], s_t) : 0;
++    if (changed && live[SnapshotAddress(i)] != wanted)
 +    {
 +      if (run_start >= 0 && SnapshotAddress(i) != SnapshotAddress(run_start) + run.size())
 +        flush_run();
 +      if (run_start < 0)
 +        run_start = i;
-+      run.push_back(LerpWords(da.matrices[i], db.matrices[i], s_t));
++      run.push_back(wanted);
 +    }
-+    else if (run_start >= 0)
-+      flush_run();
++    else
++    {
++      if (changed)
++        ++s_words_already;
++      if (run_start >= 0)
++        flush_run();
++    }
 +  }
 +  flush_run();
 +  if (da.projection != db.projection && da.projection[6] == db.projection[6])
@@ -405,9 +464,14 @@
 +    for (int i = 0; i < 6; ++i)
 +      p[i] = LerpWords(da.projection[i], db.projection[i], s_t);
 +    p[6] = db.projection[6];
-+    LoadWords(0x1020, p);
-+    ++s_projection_patched;
-+    patched = true;
++    if (!std::equal(p.begin(), p.end(), live + 0x1020))
++    {
++      LoadWords(0x1020, p);
++      ++s_projection_patched;
++      patched = true;
++    }
++    else
++      s_words_already += kProjectionWords;
 +  }
 +  if (patched)
 +    ++s_draws_patched;
@@ -417,7 +481,8 @@
 +{
 +  switch (address)
 +  {
-+  case BPMEM_TRIGGER_EFB_COPY:
++  // BPMEM_TRIGGER_EFB_COPY fehlt absichtlich: die Kopie wird in BPStructs.cpp
++  // uebersprungen, ihr Loeschen aber ausgefuehrt (NoteBlockedCopy).
 +  case BPMEM_CLEARBBOX1:
 +  case BPMEM_CLEARBBOX2:
 +  case BPMEM_SETDRAWDONE:
@@ -436,16 +501,62 @@
 +  }
 +}
 +
++void NoteBlockedCopy()
++{
++  ++s_blocked_bp;
++}
++
 +void Record(const u8* data, u32 size)
 +{
 +  s_buffer.insert(s_buffer.end(), data, data + size);
 +  s_bytes += size;
 +}
 +
++// Ohne Fenster alle 60 Bilder; mit _FROM/_COUNT ein Fenster, mit _EVERY
++// dasselbe Fenster alle N Bilder ab _FROM wiederholt.
++static bool DumpNow(u64 index)
++{
++  if (s_dump_dir.empty())
++    return false;
++  if (!s_dump_count)
++    return (index % 60) == 0;
++  if (index < s_dump_from)
++    return false;
++  const u64 offset = index - s_dump_from;
++  return (s_dump_every ? offset % s_dump_every : offset) < s_dump_count;
++}
++
++// Erster Durchlauf, XFB-Kopie ausgefuehrt, Loeschen noch nicht: Bild
++// abgeschlossen. Der EFB zeigt jetzt das vollstaendige Bild -- der
++// Vergleichswert fuer das Schattenbild desselben Bildes.
++static void OnFrameEnd(Core::System&)
++{
++  if (g_active || !g_capture)
++    return;
++  if (s_frame_ready)
++    ++s_frames_dropped;
++  const u64 index = s_frames_done++;
++  if (!g_no_draw && DumpNow(index))
++    g_framebuffer_manager->GetEFBColorTexture()->Save(
++        s_dump_dir + "/efb_" + std::to_string(index) + ".png", 0);
++  s_frame.swap(s_buffer);
++  s_buffer.clear();
++  s_frame_ready = true;
++  s_frame_index = index;
++  std::memcpy(&s_frame_start, &s_start, sizeof(Snapshot));
++  Take(&s_start);  // die naechste Mitschrift beginnt mit der XFB-Kopie selbst
++  if (g_interpolate)
++  {
++    s_draws_frame.swap(s_draws_current);
++    s_draws_current.clear();
++  }
++}
++
 +static void SecondPass(PresentInfo&)
 +{
-+  if (s_buffer.empty())
++  if (!s_frame_ready)
 +    return;
++  s_frame_ready = false;
 +  // Der zweite Durchlauf laeuft auf demselben Faden wie der erste, nach dem
 +  // Praesentieren. Die Mitschrift enthaelt Display-Listen bereits aufgeloest.
 +  auto& system = Core::System::GetInstance();
@@ -457,7 +568,7 @@
 +  if (!g_no_draw)
 +    g_framebuffer_manager->SwapInShadow();
 +  Take(&s_end);
-+  Apply(s_start);
++  Apply(s_frame_start);
 +  bool interpolate_this = false;
 +  if (g_interpolate)
 +  {
@@ -465,7 +576,7 @@
 +    size_t matched = 0;
 +    for (int k : s_match_of_current)
 +      matched += k >= 0;
-+    const size_t larger = std::max(s_draws_previous.size(), s_draws_current.size());
++    const size_t larger = std::max(s_draws_previous.size(), s_draws_frame.size());
 +    interpolate_this = larger > 0 && matched * 10 >= larger * 6;  // spike.cut_verdict: share_floor 0.6
 +    if (!interpolate_this)
 +    {
@@ -476,54 +587,50 @@
 +      ++s_frames_interpolated;
 +    s_draw_index = 0;
 +  }
++  if (g_interpolate && DumpNow(s_frame_index))
++    s_draw_log = std::fopen((s_dump_dir + "/draws_" + std::to_string(s_frame_index) + ".txt").c_str(), "w");
 +  g_active = true;
 +  u32 cycles = 0;
-+  DataReader reader(s_buffer.data(), s_buffer.data() + s_buffer.size());
++  DataReader reader(s_frame.data(), s_frame.data() + s_frame.size());
 +  const u8* end = OpcodeDecoder::RunFifo<false>(reader, &cycles);
-+  const u64 decoded = static_cast<u64>(end - s_buffer.data());
++  const u64 decoded = static_cast<u64>(end - s_frame.data());
 +  s_decoded_bytes += decoded;
-+  if (decoded != s_buffer.size())
++  if (decoded != s_frame.size())
 +  {
 +    ++s_short_frames;
 +    if (s_first_short == 0)
 +      s_first_short = s_frames + 1;
-+    std::fprintf(stderr, "[gx-dryrun] Durchlauf %llu: %llu von %llu Bytes dekodiert\n",
-+                 (unsigned long long)(s_frames + 1), (unsigned long long)decoded,
-+                 (unsigned long long)s_buffer.size());
++    std::fprintf(stderr, "[gx-dryrun] Durchlauf %llu (Bild %llu): %llu von %llu Bytes dekodiert\n",
++                 (unsigned long long)(s_frames + 1), (unsigned long long)s_frame_index,
++                 (unsigned long long)decoded, (unsigned long long)s_frame.size());
 +  }
 +  g_vertex_manager->Flush();
 +  g_active = false;
++  if (s_draw_log)
++  {
++    std::fclose(s_draw_log);
++    s_draw_log = nullptr;
++  }
 +  if (!g_no_draw)
 +  {
-+    const bool dump_now = !s_dump_dir.empty() &&
-+                          (s_dump_count ? (s_frames >= s_dump_from && s_frames < s_dump_from + s_dump_count)
-+                                        : (s_frames % 60) == 0);
-+    if (dump_now)
-+    {
-+      // Der Schatten ist gerade der aktive EFB; sein Farbbild abspeichern.
-+      if (g_framebuffer_manager->GetEFBColorTexture()->Save(
-+              s_dump_dir + "/schatten_" + std::to_string(s_frames) + ".png", 0))
-+        ++s_shadow_dumps;
-+      // Zum Vergleich der eigentliche EFB zu diesem Zeitpunkt (nach dem Tausch
-+      // ist er der Schatten-Zeiger).
-+      g_framebuffer_manager->SwapOutShadow();
-+      g_framebuffer_manager->GetEFBColorTexture()->Save(
-+          s_dump_dir + "/efb_" + std::to_string(s_frames) + ".png", 0);
-+      g_framebuffer_manager->SwapInShadow();
-+    }
++    // Der Schatten ist gerade der aktive EFB; sein Farbbild abspeichern. Das
++    // Vergleichsbild efb_<n>.png entstand an der Bildgrenze (OnFrameEnd).
++    if (DumpNow(s_frame_index) &&
++        g_framebuffer_manager->GetEFBColorTexture()->Save(
++            s_dump_dir + "/schatten_" + std::to_string(s_frame_index) + ".png", 0))
++      ++s_shadow_dumps;
 +    g_framebuffer_manager->SwapOutShadow();
 +  }
 +  Apply(s_end);
 +  if (bbox_was_enabled)
 +    g_bounding_box->Enable(system.GetPixelShaderManager());
 +  ++s_frames;
-+  s_buffer.clear();
++  s_frame.clear();
 +  if (g_interpolate)
 +  {
-+    s_draws_previous.swap(s_draws_current);
-+    s_draws_current.clear();
++    s_draws_previous.swap(s_draws_frame);
++    s_draws_frame.clear();
 +  }
-+  Take(&s_start);  // die naechste Mitschrift beginnt hier
 +}
 +
 +void Initialize()
@@ -536,6 +643,8 @@
 +    s_dump_from = std::strtoull(f, nullptr, 10);
 +  if (const char* c = std::getenv("MODERNGEKKO_GX_DRYRUN_DUMP_COUNT"))
 +    s_dump_count = std::strtoull(c, nullptr, 10);
++  if (const char* e = std::getenv("MODERNGEKKO_GX_DRYRUN_DUMP_EVERY"))
++    s_dump_every = std::strtoull(e, nullptr, 10);
 +  const char* dump = std::getenv("MODERNGEKKO_GX_DRYRUN_DUMP");
 +  s_dump_dir = dump ? dump : "";
 +  g_active = false;
@@ -545,7 +654,13 @@
 +  if (!g_capture)
 +    return;
 +  s_buffer.reserve(4u << 20);
++  s_frame.reserve(4u << 20);
++  s_frame.clear();
++  s_frame_ready = false;
++  s_frame_index = s_frames_done = s_frames_dropped = 0;
 +  Take(&s_start);
++  s_after_frame =
++      Core::System::GetInstance().GetVideoEvents().after_frame_event.Register(OnFrameEnd);
 +  s_after_present = Core::System::GetInstance().GetVideoEvents().after_present_event.Register(
 +      SecondPass);
 +}
@@ -553,31 +668,36 @@
 +void Shutdown()
 +{
 +  s_after_present.reset();
++  s_after_frame.reset();
 +  if (g_capture)
 +  {
 +    std::fprintf(stderr,
 +                 "[gx-dryrun] stufe=%d frames=%llu bytes=%llu decoded=%llu blocked_bp=%llu "
 +                 "vertices=%llu/%llu draws=%llu/%llu schattenbilder=%llu kurz=%llu/erster=%llu "
-+                 "interp: frames=%llu cuts=%llu matched=%llu patched=%llu words=%llu proj=%llu\n",
++                 "bilder=%llu/verworfen=%llu "
++                 "interp: frames=%llu cuts=%llu matched=%llu patched=%llu words=%llu schon=%llu proj=%llu\n",
 +                 g_interpolate ? 3 : g_no_draw ? 1 : 2, (unsigned long long)s_frames, (unsigned long long)s_bytes,
 +                 (unsigned long long)s_decoded_bytes, (unsigned long long)s_blocked_bp,
 +                 (unsigned long long)s_vertices, (unsigned long long)s_vertices_first,
 +                 (unsigned long long)s_draws, (unsigned long long)s_draws_first,
 +                 (unsigned long long)s_shadow_dumps, (unsigned long long)s_short_frames,
-+                 (unsigned long long)s_first_short, (unsigned long long)s_frames_interpolated,
++                 (unsigned long long)s_first_short, (unsigned long long)s_frames_done,
++                 (unsigned long long)s_frames_dropped, (unsigned long long)s_frames_interpolated,
 +                 (unsigned long long)s_cuts, (unsigned long long)s_draws_matched,
 +                 (unsigned long long)s_draws_patched, (unsigned long long)s_words_interpolated,
-+                 (unsigned long long)s_projection_patched);
++                 (unsigned long long)s_words_already, (unsigned long long)s_projection_patched);
 +  }
 +  g_capture = false;
 +  g_active = false;
 +  s_buffer.clear();
 +  s_buffer.shrink_to_fit();
++  s_frame.clear();
++  s_frame.shrink_to_fit();
 +}
 +}  // namespace GXDryRun
 --- a/Source/Core/VideoCommon/GXDryRun.h
 +++ b/Source/Core/VideoCommon/GXDryRun.h
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,49 @@
 +// Trockenlauf des GX-Befehlsstroms (WP14, Schritt 1; docs/20-VARIABLE-BILDRATE.md).
 +//
 +// Mit MODERNGEKKO_GX_DRYRUN=1 wird der Befehlsstrom jedes Bildes mitgeschrieben
@@ -594,8 +714,9 @@
 +
 +namespace GXDryRun
 +{
-+// Waehrend des zweiten Durchlaufs wahr: BPWritten sperrt die elf Register mit
-+// gastseitiger Wirkung, der Vertexlader zeichnet nichts.
++// Waehrend des zweiten Durchlaufs wahr: BPWritten sperrt die zehn Register mit
++// gastseitiger Wirkung und fuehrt von der EFB-Kopie nur das Loeschen aus; in
++// Stufe 1 zeichnet der Vertexlader nichts.
 +extern bool g_active;
 +// Mitschrift eingeschaltet (Umgebungsvariable MODERNGEKKO_GX_DRYRUN=1 oder 2).
 +extern bool g_capture;
@@ -622,6 +743,9 @@
 +// BPWritten (BPStructs.cpp), die Dolphin selbst als Register mit Nebenwirkung
 +// fuehrt.
 +bool BlocksBPRegister(u8 address);
++// Von BPWritten gerufen, wenn im zweiten Durchlauf eine EFB-Kopie (Textur,
++// RAM oder XFB) uebersprungen wurde.
++void NoteBlockedCopy();
 +}  // namespace GXDryRun
 --- a/Source/Core/VideoCommon/OpcodeDecoding.cpp
 +++ b/Source/Core/VideoCommon/OpcodeDecoding.cpp
