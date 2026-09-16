@@ -1,0 +1,128 @@
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.cpp
+@@ -263,9 +263,23 @@
+ // Takte, die CoreTiming ueberspringt (Leerlauf) -- niemand fuehrt sie aus.
+ u64 g_sr_advance_ticks = 0;
+ 
++extern u64 g_mess_inv_total, g_mess_inv_dc, g_mess_inv_dc_chunk, g_mess_inv_dc_running,
++    g_mess_inv_dc_running_by_op[4], g_mess_inv_other_running;
++
+ void StaticRecompCore::Shutdown()
+ {
+   g_static_recomp_core = nullptr;
++  std::fprintf(stderr,
++               "[mess] invalidierungen: total=%llu dcache=%llu dcache_kachel=%llu "
++               "dcache_laufend=%llu (dcbst=%llu dcbf=%llu dcbi=%llu sonst=%llu) "
++               "andere_laufend=%llu\n",
++               (unsigned long long)g_mess_inv_total, (unsigned long long)g_mess_inv_dc,
++               (unsigned long long)g_mess_inv_dc_chunk, (unsigned long long)g_mess_inv_dc_running,
++               (unsigned long long)g_mess_inv_dc_running_by_op[0],
++               (unsigned long long)g_mess_inv_dc_running_by_op[1],
++               (unsigned long long)g_mess_inv_dc_running_by_op[2],
++               (unsigned long long)g_mess_inv_dc_running_by_op[3],
++               (unsigned long long)g_mess_inv_other_running);
+   m_system.GetMemory().SetRelocationAliases({});
+   std::fprintf(stderr,
+                "[staticrecomp] yield: yields=%llu rejects=%llu noprogress=%llu span=%u jit_ticks=%llu "
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore.h
+@@ -247,6 +247,11 @@
+   bool m_busy_wait_fast_val[BUSY_WAIT_FAST_SIZE] = {};
+ 
+   u32 m_idle_pc = 0;
++
++  // MESSUNG (docs/21, dcbf): Einsprung des gerade laufenden Dispatches und
++  // Herkunft einer Invalidierung. Nicht Teil des Baus.
++  u32 m_mess_dispatch_pc = 0;
++  u8 m_mess_inv_operation = 0xFF;  // 0xFF: nicht aus dem Daten-Cache-Haken
+ };
+ 
+ extern StaticRecompCore* g_static_recomp_core;
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp
+@@ -348,7 +348,9 @@
+ 
+   if (!ppc.m_enable_dcache)
+   {
++    core->m_mess_inv_operation = operation;
+     core->m_system.GetJitInterface().InvalidateICacheLine(ea);
++    core->m_mess_inv_operation = 0xFF;
+     return;
+   }
+ 
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Run.cpp
+@@ -139,6 +139,7 @@
+           if (m_module->num_rel_modules != 0)
+             ResolveNativeAddress(runtime_dispatch_address, &linked_dispatch_address, nullptr);
+           m_guest.pc = linked_dispatch_address;
++          m_mess_dispatch_pc = linked_dispatch_address;
+           m_module->dispatch(&m_guest, linked_dispatch_address);
+           if (m_module->num_rel_modules != 0)
+             m_guest.pc = TranslateRelAddress(m_guest.pc);
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_SMC.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_SMC.cpp
+@@ -420,8 +420,20 @@
+   }
+ }
+ 
++// MESSUNG (docs/21, dcbf). Nicht Teil des Baus.
++u64 g_mess_inv_total = 0;        // alle Invalidierungen
++u64 g_mess_inv_dc = 0;           // davon aus dcbf/dcbst/dcbi bei abgeschaltetem Daten-Cache
++u64 g_mess_inv_dc_chunk = 0;     // davon: ueberlappen irgendeine Kachel
++u64 g_mess_inv_dc_running = 0;   // davon: ueberlappen die Kachel des laufenden Dispatches
++u64 g_mess_inv_dc_running_by_op[4] = {0, 0, 0, 0};  // 0 dcbst, 1 dcbf, 2 dcbi, 3 sonst
++u64 g_mess_inv_other_running = 0;  // nicht aus dem Daten-Cache-Haken, trifft laufende Kachel
++
+ void StaticRecompCore::OnICacheInvalidate(u32 address, u32 length)
+ {
++  ++g_mess_inv_total;
++  const bool mess_dc = m_mess_inv_operation != 0xFF;
++  if (mess_dc)
++    ++g_mess_inv_dc;
+   m_busy_wait_cache.clear();
+   std::fill(std::begin(m_busy_wait_fast_key), std::end(m_busy_wait_fast_key), 0u);
+   if (m_fallback_jit)
+@@ -448,11 +460,23 @@
+       hi = mid;
+   }
+ 
++  bool mess_any = false;
++  bool mess_running = false;
+   for (u32 i = lo; i < m_module->num_chunk_ranges; ++i)
+   {
+     const auto& chunk = m_module->chunk_ranges[i];
+     if (chunk.start > last)
+       break;
++    mess_any = true;
++    if (m_mess_dispatch_pc >= chunk.start && m_mess_dispatch_pc < chunk.end)
++    {
++      mess_running = true;
++      std::fprintf(stderr,
++                   "[mess] Invalidierung trifft laufende Kachel: ea=%08x len=%u dispatch=%08x "
++                   "kachel=[%08x,%08x) op=%u state=%u\n",
++                   address, length, m_mess_dispatch_pc, chunk.start, chunk.end,
++                   m_mess_inv_operation, m_chunk_state[i]);
++    }
+ 
+     if (m_chunk_state[i] != CHUNK_UNVERIFIED)
+     {
+@@ -463,4 +487,18 @@
+       ++m_reverify_events;
+     }
+   }
++  if (mess_dc && mess_any)
++    ++g_mess_inv_dc_chunk;
++  if (mess_running)
++  {
++    if (mess_dc)
++    {
++      ++g_mess_inv_dc_running;
++      const u32 op = m_mess_inv_operation;
++      ++g_mess_inv_dc_running_by_op[op == PPC_CACHE_DCBST ? 0 : op == PPC_CACHE_DCBF ? 1 :
++                                    op == PPC_CACHE_DCBI ? 2 : 3];
++    }
++    else
++      ++g_mess_inv_other_running;
++  }
+ }

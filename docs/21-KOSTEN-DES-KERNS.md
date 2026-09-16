@@ -362,9 +362,61 @@ Was dabei zu klären ist, und warum es keine Fingerübung ist:
    Zwischenbau nur des Modul-Klebers genügt nicht: Der Zweig sitzt im
    erzeugten Code jeder Kachel.
 
-**In dieser Sitzung nicht begonnen** — die Entscheidung gehört dem
-Auftraggeber, weil sie einen fremden Baum, die SMC-Wache und einen langen
-Bau berührt.
+Der Auftraggeber hat am 2026-09-16 entschieden: erst messen, dann bauen.
+
+### Gemessen: `dcbf` invalidiert im Wirt gar nichts
+
+Die Sorge aus Punkt 1 war, der Cache-Haken könne die laufende Kachel
+invalidieren. Ein Zähler in `OnICacheInvalidate` (Instrumentierung in
+`tools/diagnostics/staticrecomp-invalidierung.patch`, nicht Teil des Baus)
+unterscheidet, woher eine Invalidierung kommt und ob sie die Kachel des
+gerade laufenden Dispatches trifft:
+
+| Lauf | Invalidierungen | aus `dcbf`/`dcbst`/`dcbi` | treffen die laufende Kachel |
+|---|---|---|---|
+| Boot, 600 Bilder | 134.299 | **0** | 2 |
+| ganze Eingabefolge, 2.400 Bilder | 134.323 | **0** | 9 |
+
+**Null.** Der Grund steht in `StaticRecompCore_Hooks.cpp:390-414`: Der
+Rückfall-Haken hat für `dcbf`, `dcbst` und `dcbi` einen schnellen Weg, der
+zwei Register liest, fünf Takte verbucht und den Gastzeiger weitersetzt —
+und **nur für `icbi`** `InvalidateICacheLine` ruft. Der Kommentar dort
+(„every one funnels into InvalidateICacheLine") beschreibt den Code nicht;
+der Code ist strenger als sein Kommentar. Das `return` nach `dcbf` schützte
+also nichts.
+
+Die 2 beziehungsweise 9 Treffer auf die laufende Kachel kommen alle aus
+`icbi` (Herkunft 255 im Zähler), fast alle im Boot, etwa
+
+```
+ea=8035f6d0 len=4 dispatch=8035f6d0 kachel=[8035d600,80361600) state=1
+```
+
+— ein `icbi` auf genau den Befehl, der gerade ausgeführt wird, bei
+verifizierter Kachel. Das ist der Fall, für den die SMC-Wache gebaut ist, und
+sie greift heute, weil das Modul nach `icbi` zurückkehrt. **`icbi` kehrt
+deshalb weiterhin zurück.** `dcbi` ebenfalls: Es kann im Nutzermodus einen
+Privilegfehler auslösen, den der langsame Weg über den Interpreter meldet,
+und diese Meldung darf nicht bis zum nächsten Ausstieg liegen bleiben.
+
+### Der Eingriff
+
+`patches/dolrecomp-dcbf-bleibt-im-modul.patch`, 22 Zeilen in
+`src/backend/emitter.c`. Für `dcbst` und `dcbf` erzeugt der Emitter jetzt
+
+```c
+ppc_fallback_instruction(ctx, 0x7C0018ACu, 0x803436ACu);
+if (ctx->exception || ctx->pc != 0x803436B0u) return;
+```
+
+statt eines unbedingten `return`: Hat der Haken eine Ausnahme ausgelöst oder
+den Gastzeiger woanders hingesetzt, geht die Kontrolle wie bisher an den Wirt;
+sonst läuft die Kachel weiter, und der Rücksprung der `DCFlushRange`-Schleife
+wird erstmals im Modul genommen. Im Erzeugnis ist das nachgesehen: drei
+`dcbf`-Stellen mit der neuen Bedingung, sieben `icbi`/`dcbi`-Stellen mit dem
+alten `return`.
+
+Der Modulbau dazu läuft; die Messung folgt in diesem Dokument.
 
 ## Was das für das Ziel bedeutet
 

@@ -121,6 +121,16 @@ function Add-Patches {
             File = 'dolrecomp-msvc-popcount.patch'
             Target = Join-Path $RefRoot 'DolRecomp'
         },
+        # dcbf und dcbst bleiben im Modul. Der C-Erzeuger kehrte nach jeder
+        # Cache-Anweisung unbedingt zum Wirt zurueck; bei Sunshine waren
+        # zwei Drittel aller Dispatches ein einziges dcbf in DCFlushRange.
+        # Gemessen (docs/21): dcbf/dcbst/dcbi invalidieren im Wirt nichts,
+        # nur icbi -- deshalb kehren dcbi (kann in Nutzermodus trappen) und
+        # icbi weiterhin zurueck. Braucht einen vollstaendigen Modulbau.
+        @{
+            File = 'dolrecomp-dcbf-bleibt-im-modul.patch'
+            Target = Join-Path $RefRoot 'DolRecomp'
+        },
         # Zwei Luecken im Branch moderngekko-runtime:
         #
         # 1. StaticRecompCore::GetExceptionCheckTarget ist als override

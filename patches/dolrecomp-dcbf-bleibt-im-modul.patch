@@ -1,0 +1,22 @@
+--- a/src/backend/emitter.c
++++ b/src/backend/emitter.c
+@@ -1609,6 +1609,19 @@
+ 
+     case PPC_OP_DCBST:
+     case PPC_OP_DCBF:
++        /* dcbst and dcbf stay inside the chunk. The host hook handles them
++         * and leaves pc at the next instruction; only if it did something
++         * else (raised an exception or moved pc) is control handed back.
++         * Neither can trap in user mode, unlike dcbi, and neither can
++         * invalidate code, unlike icbi -- those two keep returning below.
++         * Measured on Super Mario Sunshine: two thirds of all dispatches
++         * were a single dcbf in DCFlushRange returning here for nothing. */
++        fprintf(out, "    ppc_fallback_instruction(ctx, 0x%08Xu, 0x%08Xu);\n",
++                inst->raw, inst->address);
++        fprintf(out, "    if (ctx->exception || ctx->pc != 0x%08Xu) return;\n",
++                inst->address + 4u);
++        break;
++
+     case PPC_OP_DCBI:
+     case PPC_OP_ICBI:
+         fprintf(out, "    ppc_fallback_instruction(ctx, 0x%08Xu, 0x%08Xu);\n",
