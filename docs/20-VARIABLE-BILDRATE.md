@@ -84,15 +84,37 @@ voraus — im ganzen Projektbaum steht heute kein einziger Setzer dafür.
 n = 2, 3, 4 und interner Skalierung 1x, 2x, 3x sowie 4K. **Das geht nur auf dem
 Windows-Rechner des Auftraggebers.**
 
-## Was vorab zu prüfen ist, ohne eine Zeile Code
+## Was vorab zu prüfen war
 
-1. **Dualcore-Gleichheit.** `CPUThread = True` in die Konfiguration des
-   kopflosen Prüfstands und den Abnahmelauf wiederholen — Lockstep, Tonvergleich,
-   `gpMarioAddress`. Schritt 5 setzt Dualcore voraus; ob der statische Kern mit
-   Rückweg dort genauso rechnet, ist offen.
-2. **Referenzlauf als Vergleichsbasis.** Ohne ihn ist in den Schritten 1 bis 4
-   nichts falsifizierbar, weil dort jede Aussage die Form „identisch zum
-   Referenzlauf" hat.
+**1. Dualcore-Gleichheit — erledigt und bestanden.** Schritt 5 setzt
+`CPUThread = True` voraus, und im ganzen Projektbaum stand dafür bisher kein
+einziger Setzer. Ob der statische Kern mit Rückweg zweifädig genauso rechnet,
+war offen. Gemessen, je 180 Bilder mit Tonmitschnitt:
+
+| Gegenstand | einfädig | zweifädig |
+|---|---|---|
+| `native` | 192.014.501 | 192.024.166 |
+| `cycles` | 1.441.772.981 | 1.442.041.571 |
+| `smc_failed`, `fallback` | 0, 0 | 0, 0 |
+| Lockstep über 30 Bilder | 3.408 geprüft, **4** Meldungen | 3.409 geprüft, **4** Meldungen |
+
+Und der Tonvergleich, das schärfste der drei Maße:
+
+```
+Ausrichtung: Versatz +0 ms, Huellkurven-Korrelation 1.0000
+Abtastwertgleich: die ersten 8,208 s (100,0 % der kuerzeren Aufnahme),
+                  insgesamt 100,00 % gleiche Abtastwerte
+Tonhoehe: Verhaeltnis 1.0000 (+0 Cent)
+```
+
+**Der statische Kern mit Rückweg erzeugt zweifädig einen abtastwertgleichen
+Tonstrom.** Die Zählerunterschiede von 0,005 % sind die übliche Streuung
+zwischen zwei Läufen. Schritt 5 hat damit seine Grundlage.
+
+**2. Referenzlauf als Vergleichsbasis — offen.** Ohne ihn ist in den Schritten
+1 bis 4 nichts falsifizierbar, weil dort jede Aussage die Form „identisch zum
+Referenzlauf" hat. Die Läufe `dc-single` und `ls-fix` dieser Sitzung können das
+werden; festgeschrieben ist es nicht.
 
 ## Größtes Risiko
 
