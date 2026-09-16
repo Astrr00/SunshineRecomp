@@ -29,12 +29,14 @@ ist der aktuelle Stand und der beste Einstieg:
 | [16-RUECKWEG.md](16-RUECKWEG.md) | **Der Kern läuft jetzt nativ.** Der Ersatz-JIT hatte den Dispatcher nie verlassen; ein Rückweg an den Ausnahme-Ausgängen senkt seinen Anteil an den Gasttakten von 99,99 % auf 0,015 %. Beide Abnahmeszenarien bestehen weiter. Preis: 1,27-mal langsamer als der Ersatz-JIT, nach einer ersten Verbesserung um 52 % |
 | [17-LOCKSTEP.md](17-LOCKSTEP.md) | **Der Verifizierer läuft erstmals.** Von 116 gemeldeten Abweichungen kamen 112 aus seiner eigenen Halteregel, die übrigen 4 aus einem Verbuchungsunterschied. In keiner steht ein Rechenfehler des Rekompilats |
 | [18-SKALIERER.md](18-SKALIERER.md) | Ausgabe-Skalierer als Produktfunktion: neun Kerne, zwei davon erstmals erreichbar. Interner Faktor 6 rendert 3840×2688, also mehr als 4K. Die Bildwirkung des Skalierers braucht ein echtes Fenster und steht aus |
-| [19-ULTRAWIDE.md](19-ULTRAWIDE.md) | Das Seitenverhältnis steht in genau einem Wort des Widescreen-Codes (`0x80412408`). `tools/widescreen bake --aspect` macht es einstellbar; 4:3, 16:9, 64:27 und 32:9 sind erzeugt |
+| [19-ULTRAWIDE.md](19-ULTRAWIDE.md) | Das Seitenverhältnis steht in `0x80416B74` — nach zwei durch Messung widerlegten Annahmen. 64:27 misst 2,3704 und 32:9 misst 3,5556 |
+| [20-VARIABLE-BILDRATE.md](20-VARIABLE-BILDRATE.md) | Plan für WP14 in sechs Schritten, beide Vorabprüfungen erledigt. Nichts gebaut |
+| [21-KOSTEN-DES-KERNS.md](21-KOSTEN-DES-KERNS.md) | **Warum nativ langsam ist:** 173,5 Wirtszyklen je Dispatch bei 9,2 Gasttakten |
 
-**Wichtig für die nächste Sitzung:** Der Rückweg ist ausdrücklich zu schalten
-(`STATICRECOMP_YIELD=1`) und **nicht** Voreinstellung — erst wenn die vier
-verbliebenen Lockstep-Meldungen geklärt sind, darf er das werden. Die
-Bedingung steht in [16](16-RUECKWEG.md).
+**Wichtig für die nächste Sitzung:** Der Rückweg ist seit dem 2026-09-16
+**Voreinstellung**; `STATICRECOMP_NO_YIELD=1` schaltet ihn aus. Offen bleiben
+19 Lockstep-Meldungen über die ganze Eingabefolge ([17](17-LOCKSTEP.md)) und
+die Geschwindigkeit ([21](21-KOSTEN-DES-KERNS.md)).
 
 Neue Werkzeuge im Repository: `tools/symbols`, `tools/widescreen`,
 `tools/framerate`, `tools/audio`, `tools/acceptance` (Abnahmelauf nach

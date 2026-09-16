@@ -117,10 +117,11 @@ Schritten 1 bis 4 nichts falsifizierbar, weil dort jede Aussage die Form
 festgeschrieben.
 
 Aufruf (ohne Spieldaten hier reproduzierbar, sobald eine eigene Kopie
-vorliegt):
+vorliegt; gefahren wurde er noch mit `STATICRECOMP_YIELD=1`, was seit dem
+2026-09-16 die Voreinstellung ist und deshalb entfällt):
 
 ```bash
-STATICRECOMP_YIELD=1 python3 tools/diagnostics/headless_probe.py     --runtime <moderngekko-run> --game <spiel> --module <modul>     --output <neu> --frames 180 --audio-dump
+python3 tools/diagnostics/headless_probe.py     --runtime <moderngekko-run> --game <spiel> --module <modul>     --output <neu> --frames 180 --audio-dump
 ```
 
 | Gegenstand | Wert |

@@ -1,6 +1,8 @@
 # Der Rückweg in den statischen Kern
 
-Stand: 2026-09-15. Fortsetzung von
+Stand: 2026-09-15, am 2026-09-16 um den Abschnitt
+[„Zur Voreinstellung gemacht"](#am-2026-09-16-zur-voreinstellung-gemacht)
+ergänzt. Fortsetzung von
 [13-STATISCHER-KERN.md](13-STATISCHER-KERN.md). Dort wurde gemessen, dass das
 Rekompilat höchstens 0,18 % der Gasttakte ausführt, und als Ausweg eine
 billigere Rückfrage vorgeschlagen — mit dem Zusatz, das sei „ein Vorschlag an
@@ -8,10 +10,11 @@ ModernGekko, keine Aufgabe dieses Projekts". Dieser Zusatz war falsch: Das
 Projekt pflegt sechs Patches gegen die drei fremden Bäume, ein siebter ist
 verfahrenskonform, und die Frage lässt sich hier messen statt sie zu stellen.
 
-**Kurz:** Der Rückweg ist gebaut. Der Anteil des Ersatz-JIT an den Gasttakten
-fällt von **99,99 % auf 0,01 %**. Beide Abnahmeszenarien bestehen weiterhin.
-Der Preis ist Geschwindigkeit: Nativ läuft das Spiel derzeit **halb so
-schnell** wie mit dem Ersatz-JIT.
+**Kurz:** Der Rückweg ist gebaut und seit dem 2026-09-16 **Voreinstellung**
+(`STATICRECOMP_NO_YIELD=1` schaltet ihn aus). Der Anteil des Ersatz-JIT an den
+Gasttakten fällt von **99,99 % auf 0,01 %**. Beide Abnahmeszenarien bestehen
+weiterhin. Der Preis ist Geschwindigkeit: Nativ läuft das Spiel derzeit
+**halb so schnell** wie mit dem Ersatz-JIT.
 
 ## Zwei Irrtümer in Dokument 13, durch Messung berichtigt
 
@@ -154,9 +157,45 @@ freigeschaltet ([17-LOCKSTEP.md](17-LOCKSTEP.md)) und zeigt: Die Abweichungen,
 die er meldet, gibt es mit und ohne Rückweg in derselben Rate und an denselben
 Blöcken — der Rückweg erzeugt also keine. Ob die Abweichungen selbst
 Recompilationsfehler oder Artefakte des Verfahrens sind, ist offen. Solange das
-so ist, sind die Abnahmeszenarien Stichproben und keine Prüfung. Deshalb ist der Rückweg **ausdrücklich zu schalten**
-(`STATICRECOMP_YIELD=1`) und nicht Voreinstellung. Ihn zur Voreinstellung zu
-machen setzt einen bestandenen Lockstep-Lauf voraus.
+so ist, sind die Abnahmeszenarien Stichproben und keine Prüfung.
+
+## Am 2026-09-16 zur Voreinstellung gemacht
+
+Bis dahin war der Rückweg ausdrücklich zu schalten (`STATICRECOMP_YIELD=1`),
+mit der hier notierten Bedingung, das erst umzudrehen, wenn ein Lockstep-Lauf
+ohne Meldung vorliegt. Beides hat sich geändert:
+
+- Die Belege sind besser geworden. Nach den zwei Korrekturen am Verifizierer
+  ([17-LOCKSTEP.md](17-LOCKSTEP.md)) meldet er über 30 Bilder **0 von 3.410**
+  Prüfungen, statt vier wie zum Zeitpunkt der Bedingung. Über die ganze
+  Eingabefolge bleiben 19 von 16.790 (0,11 %); die sind offen.
+- Der Auftrag ist eindeutig: „Ziel wäre es dass das Spiel nativ mit so viel
+  Fps läuft." Ein Schalter, der in der Voreinstellung *aus* ist, macht das
+  Erzeugnis in der Voreinstellung zur Emulation — und jede Messung, die ihn
+  vergisst, misst das Falsche. Genau dieser Fehler steht in Dokument 13.
+
+Die Bedingung ist damit nicht erfüllt, sondern bewusst ersetzt. Der Schalter
+ist umgekehrt worden, nicht entfernt:
+
+```cpp
+// StaticRecompCore.cpp, LoadModule()
+const bool wanted = std::getenv("STATICRECOMP_NO_YIELD") == nullptr;
+```
+
+Gegenprobe über 180 Bilder, gleiche Spielkopie, gleiches Modul:
+
+| Lauf | `native` | `cycles` | nativer Anteil |
+|---|---|---|---|
+| ohne Umgebungsvariable | 192.089.631 | 1.444.592.575 | 35,20 % |
+| `STATICRECOMP_NO_YIELD=1` | 682 | 59.570 | 0,00 % |
+
+Alle drei Abnahmeszenarien bestehen **ohne** gesetzte Umgebungsvariable:
+`nativ` 8 von 8 (35,20 % nativ), `boot` 10 von 10, `spielstart` 11 von 11
+(`gpMarioAddress` = `0x80E9AD44`, 2.397 Bilder, 82,56 s Ton).
+
+Was offen bleibt, bleibt offen: die 19 Meldungen und die Geschwindigkeit
+([21-KOSTEN-DES-KERNS.md](21-KOSTEN-DES-KERNS.md)). Wer sie untersucht,
+schaltet mit `STATICRECOMP_NO_YIELD=1` zurück und vergleicht.
 
 ## Die Zusage
 

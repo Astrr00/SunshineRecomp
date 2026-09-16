@@ -167,7 +167,7 @@
    std::vector<std::pair<u32, u64>> dispatch_samples(m_dispatch_samples.begin(),
                                                      m_dispatch_samples.end());
    std::sort(dispatch_samples.begin(), dispatch_samples.end(),
-@@ -331,6 +368,32 @@
+@@ -331,6 +368,37 @@
  
    m_module = desc;
    m_module_active = (desc != nullptr);
@@ -177,10 +177,15 @@
 +  m_hot_chunk_enabled = std::getenv("STATICRECOMP_NO_CHUNKCACHE") == nullptr;
 +
 +
-+  // Der Modulbereich als Bereichsvergleich fuer den Rueckweg. Bis der
-+  // Lockstep-Verifizierer zur Verfuegung steht (das Modul exportiert
-+  // ppc_set_mem_write_journal nicht), ist der Rueckweg ausdruecklich zu
-+  // schalten und nicht Voreinstellung.
++  // Der Modulbereich als Bereichsvergleich fuer den Rueckweg.
++  //
++  // Voreinstellung ist AN: Ohne den Rueckweg fuehrt das Modul 0,0015 Prozent
++  // der Gasttakte aus, der Rest laeuft im Ersatz-JIT -- das waere Emulation
++  // und kein Port. Der Lockstep-Verifizierer meldet mit Rueckweg ueber 30
++  // Bilder keine einzige Abweichung (3.410 gepruefte Bloecke), ueber die ganze
++  // Eingabefolge 19 von 16.790; die sind offen und in docs/17-LOCKSTEP.md
++  // benannt. STATICRECOMP_NO_YIELD=1 schaltet ihn aus, fuer Vergleichslaeufe
++  // und falls sich eine der 19 als echter Fehler herausstellt.
 +  {
 +    u32 low = 0xFFFFFFFFu, high = 0;
 +    for (u32 i = 0; i < desc->num_code_ranges; ++i)
@@ -188,7 +193,7 @@
 +      low = std::min(low, desc->code_ranges[i].start);
 +      high = std::max(high, desc->code_ranges[i].end);
 +    }
-+    const bool wanted = std::getenv("STATICRECOMP_YIELD") != nullptr;
++    const bool wanted = std::getenv("STATICRECOMP_NO_YIELD") == nullptr;
 +    const bool usable = wanted && high > low && desc->num_rel_modules == 0;
 +    g_sr_yield_low = usable ? low : 0;
 +    g_sr_yield_span = usable ? (high - low) : 0;

@@ -53,8 +53,9 @@ stillschweigend unterschiedlich verstanden wird.
 > den Rest übernahm Dolphins JIT64. [16-RUECKWEG.md](16-RUECKWEG.md) behebt das:
 > Der Ersatz-JIT betrat seinen Dispatcher und kehrte nie zurück. Mit dem
 > Rückweg fällt sein Anteil auf 0,015 %. Die Zeile stimmt seitdem — aber nur
-> mit gesetztem `STATICRECOMP_YIELD=1`, solange die vier offenen
-> Lockstep-Meldungen aus [17-LOCKSTEP.md](17-LOCKSTEP.md) nicht geklärt sind.
+> seit dem 2026-09-16 in der Voreinstellung; `STATICRECOMP_NO_YIELD=1`
+> schaltet ihn aus. Offen bleiben 19 Lockstep-Meldungen über die ganze
+> Eingabefolge ([17-LOCKSTEP.md](17-LOCKSTEP.md)).
 
 Das ist dieselbe Bedeutung von „nativ", die Zelda64Recomp und SunPad
 verwenden: nativer Spielcode plus eine Laufzeitbibliothek für die

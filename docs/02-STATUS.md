@@ -64,8 +64,10 @@ Zwei Punkte bleiben offen und sind die nächsten Schritte:
    Nach zwei Korrekturen am Verifizierer selbst — der Halteregel und einer
    Spätprüfung — bleiben über 30 Bilder **0 von 3.410** und über die ganze
    Eingabefolge **19 von 16.790** (0,11 %). Die 19 sind nicht aufgeklärt und
-   nicht alle vom selben Muster. Solange sie stehen, bleibt der Rückweg
-   ausdrücklich zu schalten (`STATICRECOMP_YIELD=1`) und nicht Voreinstellung.
+   nicht alle vom selben Muster. Der Rückweg ist seit dem 2026-09-16 trotzdem
+   **Voreinstellung** (`STATICRECOMP_NO_YIELD=1` schaltet ihn aus): Ohne ihn
+   wäre das Erzeugnis Emulation und kein Port, und jede Messung, die den
+   Schalter vergisst, misst wieder das Falsche.
 2. **Geschwindigkeit.** Nativ läuft das Spiel 1,27-mal langsamer als mit dem
    Ersatz-JIT — nach einer ersten Verbesserung um 52 %
    (`moderngekko-host-call-active.patch`). Der Rest sind Prüfungen je Dispatch,
