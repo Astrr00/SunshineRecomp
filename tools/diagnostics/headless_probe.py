@@ -83,6 +83,8 @@ def main() -> int:
                    help="zusaetzliche Zeile im Abschnitt [Core] der Dolphin.ini, "
                         "mehrfach moeglich (etwa LargeEntryPointsMap=False). "
                         "Landet im Manifest, damit der Lauf nachvollziehbar bleibt.")
+    p.add_argument("--gfx-setting", action="append", default=[],
+                   help="SCHLUESSEL=WERT fuer Dolphins GFX.ini [Settings] (mehrfach)")
     p.add_argument("--jit", action="store_true",
                    help="ohne statisches Modul mit JIT64 laufen (Vergleichslauf); "
                         "--module wird dann nicht uebergeben")
@@ -112,6 +114,15 @@ def main() -> int:
     for setting in args.core_setting:
         if "=" not in setting:
             p.error(f"--core-setting braucht SCHLUESSEL=WERT, nicht {setting!r}")
+    for setting in args.gfx_setting:
+        if "=" not in setting:
+            p.error(f"--gfx-setting braucht SCHLUESSEL=WERT, nicht {setting!r}")
+    if args.gfx_setting:
+        # Dolphins GFX.ini, Abschnitt [Settings] -- etwa DumpFrames=True und
+        # DumpFramesAsImages=True fuer ein PNG je praesentiertem Bild unter
+        # user/Dump/Frames. Die Laufzeit ergaenzt ihre eigenen Schluessel.
+        (user / "Config/GFX.ini").write_text(
+            "[Settings]\n" + "".join(f"{s}\n" for s in args.gfx_setting))
     (user / "Config/Dolphin.ini").write_text(
         f"[Core]\nEnableCheats={'True' if args.cheats_ini else 'False'}\n"
         + ("EmulationSpeed=0\n" if args.uncapped else "")
@@ -145,6 +156,7 @@ def main() -> int:
                 "uncapped": bool(args.uncapped),
                 "core_settings": list(args.core_setting),
                 "video_settings": list(args.video_setting),
+                "gfx_settings": list(args.gfx_setting),
                 "module_sha256": hashlib.sha256(args.module.read_bytes()).hexdigest()
                 if static else None}
 

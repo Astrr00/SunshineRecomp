@@ -167,9 +167,36 @@ Fenstergröße, der Skalierer hat dann nichts zu skalieren, und alle Kerne
 liefern bitgleiche Bilder. Der erste Vergleich dieser Sitzung hatte deshalb
 gar nicht den Skalierer gemessen.
 
+## Nachtrag vom 2026-09-16: Bildwirkung am Fenster belegt
+
+Der Weg über den Bildschirm geht doch: nicht `Xvfb -fbdir`, sondern `xwd`
+gegen den laufenden Xvfb (`tools/diagnostics/window_capture.py`, neu;
+braucht `xvfb` und `x11-apps`). Die Laufzeit zeichnet mit `internal_scale=1`
+(nativ 640×528) in ein Fenster `output_resolution=1920x1080` unter `-X11`,
+der Kern kommt über `scaler=` in `config.ini`; bei Bildnummer ≥ 720
+(Titelbild) wird der Bildschirm gelesen. Maß: Anteil gleicher horizontaler
+Nachbarpixel in den mittleren Zeilen — Nearest Neighbor hinterlässt bei
+dreifacher Vergrößerung Blöcke, jeder andere Kern Verläufe.
+
+| Kern | gleiche Nachbarn | nicht schwarz |
+|---|---|---|
+| nearest | 73,1 % | 75,3 % |
+| bilinear | 42,2 % | 75,6 % |
+| bspline | 40,0 % | 75,6 % |
+| mitchell | 41,4 % | 75,0 % |
+
+Nearest gegen Bilinear, ein Bild auseinander aufgenommen (724 und 723):
+mittlere Abweichung 9,3 je Kanal, 43 Prozent der Pixel verschieden; im
+vergrößerten Ausschnitt Treppen gegen weiche Kanten. Damit ist belegt, dass
+die Kerne den Weg bis zum Fenster nehmen — auf Lavapipe; was sie auf einer
+Grafikkarte kosten, bleibt Windows vorbehalten. Die fünf übrigen Kerne
+(catmull-rom, sharp-bilinear, area, hermite, auto) sind mit demselben
+Werkzeug in wenigen Minuten nachzuholen; der Lauf dafür wurde abgebrochen.
+
 ## Offen
 
-1. Bildwirkung der neun Kerne am echten Fenster vergleichen (Windows).
+1. Die fünf übrigen Kerne mit `window_capture.py` nachmessen; Geschwindigkeit
+   der Kerne auf einer echten Grafikkarte (Windows).
 2. 3840x2160 als Ausgabeauflösung fahren.
 3. Eine Schärfungsstufe prüfen. Im Baum gibt es **kein** FSR/RCAS; wer sie
    will, muss sie als Nachbearbeitungsshader hinzufügen.

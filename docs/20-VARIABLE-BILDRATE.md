@@ -295,8 +295,13 @@ an der Bildgrenze, nicht mehr beim Präsentieren; `<n>` zählt XFB-Kopien.
 
 Mit dieser Grenze, Stufe 3 aktiv, ganze Eingabefolge auf Vulkan/Lavapipe
 (Stand nach allen Korrekturen dieses Abschnitts und des nächsten): 2.083
-abgeschlossene Bilder bei 2.081 Präsentierungen, keines verworfen (zwei
-Kopien zwischen zwei Präsentierungen zählt der Zähler `verworfen`).
+abgeschlossene Bilder bei 2.081 Schritten des Bildzählers, keines verworfen
+(zwei Kopien zwischen zwei Präsentierungen zählt der Zähler `verworfen`).
+Der Bildzähler der Sonde zählt eindeutige Bilder, nicht Präsentierungen —
+ein Irrtum, der erst beim Bau von Schritt 4 aufgefallen ist: **Das Spiel
+läuft durchgehend mit 30 Bildern je Sekunde und präsentiert jedes Bild
+zweimal, auch in den Menüs** (Null-Lauf, Eingabefolge plus 3.000 Bilder
+Vorspann: 10.343 Präsentierungen, 5.189 Wiederholungen, 5.154 XFB-Kopien).
 Schatten gegen eigentlichen EFB **desselben Bildes**, alle 60 Bilder:
 
 | Bilder | mittlere Abweichung je Kanal | Pixel verschieden |
@@ -441,6 +446,30 @@ die landeten im Schatten oder wurden in Stufe 1 mit dem `cullall`-Stapel
 verworfen (jetzt ein Flush vor dem zweiten Durchlauf); und in Stufe 1
 löschte die nachgestellte EFB-Kopie den eigentlichen EFB, weil dort kein
 Schatten eingetauscht ist (jetzt ausgelassen).
+
+## Schritt 4: gebaut, Bild noch nicht geprüft
+
+`MODERNGEKKO_GX_DRYRUN_PRESENT=1` zusätzlich zu Stufe 3. Der zweite
+Durchlauf läuft jetzt vor dem Präsentieren (`before_present_event`).
+Bringt eine Präsentation ein neues Bild und war die vorige eine
+Wiederholung — das Spiel läuft also gerade mit 30 Bildern je Sekunde —,
+tritt das Zwischenbild an die Stelle des XFB: `Presenter::Present` und der
+Bildmitschnitt fragen `GXDryRun::PresentOverride`, das den Schatten samt
+EFB-Ausschnitt der XFB-Kopie liefert. Die Wiederholung danach zeigt das
+echte Bild. Die Ausgaberate bleibt, die Reihenfolge stimmt (A, Zwischenbild,
+B), das echte Bild erscheint eine Präsentation später als zuvor. Bei einem
+Schnitt oder ohne Wiederholung davor bleibt alles beim XFB.
+
+Gemessen bisher nur die Zähler, Null-Backend, Eingabefolge plus 3.000
+Bilder: 10.343 Präsentierungen, 5.189 Wiederholungen, 5.047 davon mit dem
+Zwischenbild belegt, Exit-Code 0. **Nicht geprüft ist das Bild** — ob das
+ersetzte Bild wirklich auf dem Schirm oder im Mitschnitt erscheint. Der
+Weg dafür steht: `headless_probe --gfx-setting DumpFrames=True
+--gfx-setting DumpFramesAsImages=True` (neu) legt je Präsentation ein PNG
+unter `user/Dump/Frames` ab; ohne Stufe 4 müssen die Paare gleich sein, mit
+Stufe 4 muss das erste Bild jedes Paares zwischen seinen Nachbarn liegen
+(`tools/framerate compare`). Alternativ der Bildschirm selbst über
+`tools/diagnostics/window_capture.py` (docs/18).
 
 ## Was vorab zu prüfen war
 
