@@ -72,7 +72,18 @@ Drei Fallstricke, alle ausgeräumt:
    die Steigung bildet (`tools/audio rate`).
 2. **`frame_count` ist keine Uhr.** Es zählt nur *eindeutige* Bilder
    (`VideoEvents.h`: „The number of (unique) frames since the emulated console
-   booted"), hängt also am Inhalt. `present_count` zählt jede Bildausgabe.
+   booted"), hängt also am Inhalt. `present_count` sollte jede Bildausgabe zählen.
+
+   > **Berichtigt am 2026-09-16** ([20-VARIABLE-BILDRATE.md](20-VARIABLE-BILDRATE.md)):
+   > Das tut er nicht. `m_present_count` wird je tatsächlicher Ausgabe
+   > **zweimal** erhöht — einmal in `ViSwap` (`Present.cpp:174`) und einmal als
+   > erste Zeile von `Present` selbst (`Present.cpp:904`) —, dazu einmal je
+   > übersprungenem Duplikat und einmal je Fortschrittsbild des Shader-Caches.
+   > Damit ist der in diesem Dokument gemessene Wert von 3,0053 Ausgaben je
+   > eindeutigem Bild erklärt: Es sind nicht drei Ausgaben, sondern im
+   > Wesentlichen anderthalb, doppelt gezählt. Für die Aussagen dieses
+   > Dokuments ändert das nichts — sie stützen sich auf `frame_count` und den
+   > Tonstrom, nicht auf `present_count`.
 3. **Die Wanduhr hilft nicht.** Die Emulation ist auf 100 % gedrosselt, aber
    der Regler zielt auf die emulierte Zeit des Kerns selbst; er ist also keine
    unabhängige Uhr. Ein früher Versuch, der die Wanduhr heranzog, lief

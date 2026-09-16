@@ -13,7 +13,7 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 
 | # | Anforderung | Stand | Belegt | Offen |
 |---|---|---|---|---|
-| 1 | Unbegrenzte Framerate | Spike abgeschlossen | Zuordnung der Zeichenbefehle 96–100 %, Bewegung steckt in den Matrizen, synthetisches Zwischenbild gerendert und geprüft, Schnitterkennung kalibriert ([11](11-FRAMERATE-SPIKE.md)) | Umsetzung (WP14); Gegenschnitt in gleicher Szene; Kosten auf echter GPU; Entscheidung des Auftraggebers zu PLAN 5.4 |
+| 1 | Unbegrenzte Framerate | Spike abgeschlossen, **Umsetzungsplan steht** | Zuordnung der Zeichenbefehle 96–100 %, Bewegung steckt in den Matrizen, synthetisches Zwischenbild gerendert und geprüft, Schnitterkennung kalibriert ([11](11-FRAMERATE-SPIKE.md)) | Umsetzung (WP14); Gegenschnitt in gleicher Szene; Kosten auf echter GPU; Entscheidung des Auftraggebers zu PLAN 5.4 |
 | 2 | Hohe Auflösung, getrennte Ausgabe, **Skalierer** | weitgehend erledigt | `internal_scale` 1–12 und `output_resolution` getrennt gemessen; randloses Vollbild 1920x1080 und 3440x1440 ([07](07-ANZEIGE.md)); interner Faktor 6 rendert 3840x2688 = 10,3 MPixel, also mehr als 4K in beiden Richtungen; neun Skalierer-Kerne als Namen bedienbar, zwei davon erstmals erreichbar ([18](18-SKALIERER.md)) | Bildwirkung der Kerne am echten Fenster; 3840x2160 als Ausgabegröße nie gefahren; Schärfungsstufe fehlt; HiDPI, Mehrmonitor, Launcher-Bedienung |
 | 3 | Echtes Widescreen, **Ultrawide** | **Kern abgenommen, 21:9 und 32:9 an der Projektion belegt** | 25/25 Patchstellen im RAM; in das DOL eingebacken, kein SMC-Rückfall; senkrechter Maßstab bitgleich, waagerechter mal 0,757, Sichtverhältnis exakt 16/9, HUD am Bildrand verankert und unverzerrt ([03](03-WIDESCREEN.md), [09](09-DOL-BEFUNDE.md), [10](10-KOPFLOSER-PRUEFSTAND.md), [15](15-WIDESCREEN-ABNAHME.md)) | Filme werden gestreckt (Projektion unverändert, [15](15-WIDESCREEN-ABNAHME.md)); Culling, Effekte und weitere HUD-Elemente; 21:9 und 32:9; ob der Code nativ oder im JIT läuft, ist offen ([13](13-STATISCHER-KERN.md)) |
 | 4 | HUD-Anker, Menüs, Sequenzen | nicht begonnen | nur mittelbar über die 2D-Konstanten des Gecko-Codes | alles; Adressbasis steht jetzt zur Verfügung (WP7) |
@@ -42,7 +42,7 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 | WP17 | Rückweg in den statischen Kern | **belegt** | [16](16-RUECKWEG.md), [17](17-LOCKSTEP.md); offen: Urteil des Lockstep, Voreinstellung, Geschwindigkeit |
 | WP18 | Grafikskalierer | **Verdrahtung belegt** | [18](18-SKALIERER.md); offen: Bildwirkung am echten Fenster, Schärfung, Launcher |
 | WP13 | Framerate-Spike | **abgeschlossen** | [11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md) |
-| WP14 | Framerate-Umsetzung | wartet auf Entscheidung | PLAN 5.4 |
+| WP14 | Framerate-Umsetzung | **Plan steht, nichts gebaut** | Entscheidung mit dem Ziel des Auftraggebers gefallen; sechs Schritte mit Fundstellen in [20](20-VARIABLE-BILDRATE.md) |
 | WP15 | 60-FPS-Modus (optional) | zurückgestellt | Entscheidung 6 im Plan |
 | WP16 | Abschluss | nicht begonnen | — |
 
@@ -100,6 +100,7 @@ sondern „hier ist ein Patch — ist das der beabsichtigte Weg?".
 | [17](17-LOCKSTEP.md) | der Lockstep-Verifizierer: freigeschaltet, erstmals gelaufen |
 | [18](18-SKALIERER.md) | Ausgabe-Skalierer und hohe Auflösung |
 | [19](19-ULTRAWIDE.md) | Ultrawide: 21:9 und 32:9 an der Projektion abgenommen |
+| [20](20-VARIABLE-BILDRATE.md) | variable Bildrate: der Weg in die Laufzeit, sechs Schritte |
 
 Die frühere Chronik dieses Dokuments ist in die Matrizen oben aufgegangen. Was
 darunter folgt, sind die Messwerte der Windows-Sitzungen; sie bleiben als
