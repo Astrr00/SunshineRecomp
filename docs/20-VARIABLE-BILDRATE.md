@@ -447,7 +447,7 @@ verworfen (jetzt ein Flush vor dem zweiten Durchlauf); und in Stufe 1
 löschte die nachgestellte EFB-Kopie den eigentlichen EFB, weil dort kein
 Schatten eingetauscht ist (jetzt ausgelassen).
 
-## Schritt 4: gebaut, Bild noch nicht geprüft
+## Schritt 4: gebaut und im Mitschnitt gemessen
 
 `MODERNGEKKO_GX_DRYRUN_PRESENT=1` zusätzlich zu Stufe 3. Der zweite
 Durchlauf läuft jetzt vor dem Präsentieren (`before_present_event`).
@@ -460,16 +460,39 @@ echte Bild. Die Ausgaberate bleibt, die Reihenfolge stimmt (A, Zwischenbild,
 B), das echte Bild erscheint eine Präsentation später als zuvor. Bei einem
 Schnitt oder ohne Wiederholung davor bleibt alles beim XFB.
 
-Gemessen bisher nur die Zähler, Null-Backend, Eingabefolge plus 3.000
-Bilder: 10.343 Präsentierungen, 5.189 Wiederholungen, 5.047 davon mit dem
-Zwischenbild belegt, Exit-Code 0. **Nicht geprüft ist das Bild** — ob das
-ersetzte Bild wirklich auf dem Schirm oder im Mitschnitt erscheint. Der
-Weg dafür steht: `headless_probe --gfx-setting DumpFrames=True
---gfx-setting DumpFramesAsImages=True` (neu) legt je Präsentation ein PNG
-unter `user/Dump/Frames` ab; ohne Stufe 4 müssen die Paare gleich sein, mit
-Stufe 4 muss das erste Bild jedes Paares zwischen seinen Nachbarn liegen
-(`tools/framerate compare`). Alternativ der Bildschirm selbst über
-`tools/diagnostics/window_capture.py` (docs/18).
+Zähler, Null-Backend, Eingabefolge plus 3.000 Bilder: 10.343
+Präsentierungen, 5.189 Wiederholungen, 5.047 davon mit dem Zwischenbild
+belegt, Exit-Code 0.
+
+**Das Bild, im Mitschnitt.** Dolphins Bildmitschnitt (`[Movie]
+DumpFrames=True` in Dolphin.ini, `DumpFramesAsImages=True` in GFX.ini —
+`headless_probe --core-setting`/`--gfx-setting`) schreibt je eindeutigem
+Bild ein PNG des präsentierten Bildes, 640×480, und zwar bei der ersten
+Präsentation; mit Stufe 4 ist das genau das Zwischenbild. Zwei Läufe über
+die ersten 960 Bilder (Vorspann und Titel), einmal ohne, einmal mit
+`MODERNGEKKO_GX_DRYRUN_PRESENT=1`; beide deterministisch (Bilder 2, 50, 200
+pixelgleich), 951 von 969 Bildern ersetzt. A und B sind die Mitschnitte
+des Laufs ohne, das Zwischenbild der Mitschnitt des Laufs mit:
+
+| Bild | Pixel A→B verschieden | Zwischenbild gegen A / gegen B | im Intervall | nur im Zwischenbild |
+|---|---|---|---|---|
+| 300 (Aufblenden, Schnitt) | 12,35 % | 12,35 % / 0,00 % | — (nicht ersetzt) | 2 |
+| 420 (Titel blendet auf) | 24,45 % | 14,60 % / 14,22 % | 99,5 % | 1.864 |
+| 520 | 8,96 % | 9,16 % / 0,36 % | 99,2 % | 1.274 |
+| 600 | 0,91 % | 0,86 % / 0,67 % | 85,0 % | 929 |
+| 800 | 2,22 % | 4,58 % / 3,88 % | 81,3 % | 8.490 |
+| 900 | 2,24 % | 4,23 % / 3,79 % | 84,6 % | 7.611 |
+
+Bild 420 ist der Beleg: Das präsentierte Bild liegt zu gleichen Teilen
+zwischen seinen Nachbarn. Bild 520 zeigt die Grenze des Verfahrens: Die
+Änderung von A nach B steckt dort nicht in Matrizen, das Zwischenbild ist
+B. Die Pixel, die nur im Zwischenbild anders sind (bis 2,7 Prozent bei
+800 und 900), haben eine andere Ursache als in der Dateiauswahl: Das
+echte Bild geht durch die XFB-Kopie mit ihrem Kopierfilter und der
+Skalierung von 528 auf 480 Zeilen, das Zwischenbild kommt als Blit direkt
+aus dem 640×528-Schatten. **Das ist die nächste Arbeit an Schritt 4:**
+Das Zwischenbild muss denselben Kopierweg nehmen wie das echte Bild, sonst
+flimmern feine Kanten mit 30 Hz zwischen zwei Filterungen.
 
 ## Was vorab zu prüfen war
 
