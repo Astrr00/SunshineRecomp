@@ -42,7 +42,7 @@ Sitzungen legen eine neue Nummer an, statt alte Dokumente mit
 | WP17 | Rückweg in den statischen Kern | **belegt** | [16](16-RUECKWEG.md), [17](17-LOCKSTEP.md); offen: Urteil des Lockstep, Voreinstellung, Geschwindigkeit |
 | WP18 | Grafikskalierer | **Verdrahtung belegt** | [18](18-SKALIERER.md); offen: Bildwirkung am echten Fenster, Schärfung, Launcher |
 | WP13 | Framerate-Spike | **abgeschlossen** | [11-FRAMERATE-SPIKE.md](11-FRAMERATE-SPIKE.md) |
-| WP14 | Framerate-Umsetzung | **Plan steht, nichts gebaut** | Entscheidung mit dem Ziel des Auftraggebers gefallen; sechs Schritte mit Fundstellen in [20](20-VARIABLE-BILDRATE.md) |
+| WP14 | Framerate-Umsetzung | **Schritte 1 und 2 von 6 gebaut und gemessen** | Der GX-Strom jedes Bildes läuft ein zweites Mal (`MODERNGEKKO_GX_DRYRUN`), in Schritt 2 in einen Schatten-EFB; über die ganze Eingabefolge Zeichenaufrufe und Vertices identisch, auf Vulkan/Lavapipe trägt der Schatten das Bild — der Gast merkt nichts davon ([20](20-VARIABLE-BILDRATE.md)). Offen: Interpolation, Sichtbarkeit, Taktentkopplung, Kosten auf echter GPU |
 | WP15 | 60-FPS-Modus (optional) | zurückgestellt | Entscheidung 6 im Plan |
 | WP16 | Abschluss | nicht begonnen | — |
 
