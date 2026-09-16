@@ -124,9 +124,79 @@ Die Voreinstellung bleibt unverändert: rohe XFB-Auflösung, kein Skalieren —
 so, wie es der Framerate-Spike ([11](11-FRAMERATE-SPIKE.md)) für die
 Bildzuordnung braucht.
 
+## Nachtrag vom 2026-09-16: 4K und der Skalierer sind hier doch prüfbar
+
+Zwei Aussagen oben sind zu berichtigen.
+
+**Erstens: „braucht eine echte Ausgabefläche" — die gibt es hier.** `Xvfb`
+und Mesas Lavapipe sind installiert, und `dolphin-emu-nogui` ist mit der
+X11-Plattform gebaut. `tools/framerate replay` kennt deshalb jetzt
+`--platform x11`; unter `xvfb-run` bekommt der Präsentierer eine echte
+Swapchain, und die Bildausgabe auf Fensterauflösung liefert das Fenster:
+
+| Fenster | Bildgröße des Mitschnitts |
+|---|---|
+| 1920x1080 | 1920 x 1080 (16:9-Szene) |
+| **3840x2160** | **3840 x 2160** |
+
+Damit ist „3840x2160 wurde nie gefahren" erledigt: fünf Bilder in 4K, auf
+Lavapipe gerendert und aus dem Fenster mitgeschnitten. Belegt ist der
+Bildweg, nicht die Geschwindigkeit einer Grafikkarte.
+
+**Zweitens: Der Bildmitschnitt geht am Skalierer vorbei — und der Versuch,
+das zu ändern, ist gescheitert.** `FrameDumper::DumpCurrentFrame` streckt das
+XFB-Bild mit `g_gfx->ScaleTexture`, bilinear und ohne den Nachbearbeiter;
+Dolphins eigener Kommentar in `Present.cpp:315` nennt das als offenes TODO.
+Ein Patch, der den Mitschnitt stattdessen durch
+`PostProcessing::BlitFromTexture` führt (denselben Weg wie das Bild auf dem
+Schirm), stürzt in Lavapipe ab, sobald er wirklich skaliert — bei
+`--internal 1` und `--internal 2`, kopflos wie unter X11; `gdb` zeigt den
+Fehler in einem Rasterisierer-Faden von `libvulkan_lvp.so` ohne Dolphin-Rahmen
+im Stapel. Mit automatischer interner Auflösung fällt der Zweig gar nicht an,
+weil das XFB-Bild schon Fenstergröße hat — deshalb liefen die 4K-Läufe oben
+durch. Der Patch ist zurückgenommen.
+
+Damit gilt weiterhin: **Die Bildwirkung der Kerne ist hier nicht belegt.**
+Zwei Wege bleiben, beide nicht in dieser Sitzung: die Ursache des
+Lavapipe-Absturzes finden (Validierungsschichten fehlen in dieser Umgebung),
+oder den Bildschirm selbst abgreifen — `Xvfb -fbdir` lieferte einen
+schwarzen Framebuffer, das Fenster wird dort offenbar nicht auf den
+Bildschirm gezeichnet. Ein Irrtum unterwegs, der stehen bleiben soll: Ohne
+`--internal N` rendert Dolphin die interne Auflösung automatisch in
+Fenstergröße, der Skalierer hat dann nichts zu skalieren, und alle Kerne
+liefern bitgleiche Bilder. Der erste Vergleich dieser Sitzung hatte deshalb
+gar nicht den Skalierer gemessen.
+
+## Nachtrag vom 2026-09-16: Bildwirkung am Fenster belegt
+
+Der Weg über den Bildschirm geht doch: nicht `Xvfb -fbdir`, sondern `xwd`
+gegen den laufenden Xvfb (`tools/diagnostics/window_capture.py`, neu;
+braucht `xvfb` und `x11-apps`). Die Laufzeit zeichnet mit `internal_scale=1`
+(nativ 640×528) in ein Fenster `output_resolution=1920x1080` unter `-X11`,
+der Kern kommt über `scaler=` in `config.ini`; bei Bildnummer ≥ 720
+(Titelbild) wird der Bildschirm gelesen. Maß: Anteil gleicher horizontaler
+Nachbarpixel in den mittleren Zeilen — Nearest Neighbor hinterlässt bei
+dreifacher Vergrößerung Blöcke, jeder andere Kern Verläufe.
+
+| Kern | gleiche Nachbarn | nicht schwarz |
+|---|---|---|
+| nearest | 73,1 % | 75,3 % |
+| bilinear | 42,2 % | 75,6 % |
+| bspline | 40,0 % | 75,6 % |
+| mitchell | 41,4 % | 75,0 % |
+
+Nearest gegen Bilinear, ein Bild auseinander aufgenommen (724 und 723):
+mittlere Abweichung 9,3 je Kanal, 43 Prozent der Pixel verschieden; im
+vergrößerten Ausschnitt Treppen gegen weiche Kanten. Damit ist belegt, dass
+die Kerne den Weg bis zum Fenster nehmen — auf Lavapipe; was sie auf einer
+Grafikkarte kosten, bleibt Windows vorbehalten. Die fünf übrigen Kerne
+(catmull-rom, sharp-bilinear, area, hermite, auto) sind mit demselben
+Werkzeug in wenigen Minuten nachzuholen; der Lauf dafür wurde abgebrochen.
+
 ## Offen
 
-1. Bildwirkung der neun Kerne am echten Fenster vergleichen (Windows).
+1. Die fünf übrigen Kerne mit `window_capture.py` nachmessen; Geschwindigkeit
+   der Kerne auf einer echten Grafikkarte (Windows).
 2. 3840x2160 als Ausgabeauflösung fahren.
 3. Eine Schärfungsstufe prüfen. Im Baum gibt es **kein** FSR/RCAS; wer sie
    will, muss sie als Nachbearbeitungsshader hinzufügen.

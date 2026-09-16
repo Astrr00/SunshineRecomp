@@ -56,6 +56,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--internal", type=int,
                    help="interner Aufloesungsfaktor (1..12). Bei Faktor 6 rendert "
                         "das Spiel 3840x3168 und die Bildausgabe gibt genau das aus.")
+    r.add_argument("--platform", default="headless",
+                   help="Fensterplattform des Players: headless (Voreinstellung, keine "
+                        "Ausgabeflaeche, kein Skalierer) oder x11, etwa unter xvfb-run.")
     r.add_argument("--window", metavar="BREITExHOEHE",
                    help="Fenstergroesse fuer die Bildausgabe, etwa 1920x1080. "
                         "Schaltet die Ausgabe auf die Fensterauflösung um.")
@@ -86,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error("--resampling ohne --window bleibt wirkungslos")
             found = replay.replay(args.dff, args.player, args.output, args.images,
                                   args.timeout, resampling=args.resampling, window=window,
-                                  internal=args.internal)
+                                  internal=args.internal, platform=args.platform)
         except replay.ReplayError as error:
             print(f"Fehler: {error}", file=sys.stderr)
             return 2

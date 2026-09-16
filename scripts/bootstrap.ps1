@@ -219,6 +219,25 @@ function Add-Patches {
             File = 'recompcore-leerlauf-zwischenspeicher.patch'
             Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
         }
+        # WP14 Schritte 1 bis 3 (docs/20): mit MODERNGEKKO_GX_DRYRUN=1 wird
+        # jedes Bild mitgeschrieben und nach dem Praesentieren ein zweites Mal
+        # dekodiert, ohne zu zeichnen; mit =2 zeichnet der zweite Durchlauf in
+        # einen Schatten-EFB (eigenes Farb-, Tiefen- und Konvertierungspaar,
+        # per Zeigertausch). Bildgrenze ist die XFB-Kopie (after_frame_event),
+        # nicht das Praesentieren. Riegel vor den zehn BP-Registern mit
+        # gastseitiger Wirkung; die EFB-Kopie wird nicht kopiert, ihr Loeschen
+        # aber ausgefuehrt. Bounding Box und Pixelzaehler aus, CP/XF/BP-Stand
+        # vom Bildanfang wiederhergestellt. Mit =3 werden die Zeichenbefehle
+        # dem Vorbild zugeordnet und die geaenderten Matrixwoerter vor dem
+        # Zeichenbefehl auf den Zwischenwert gesetzt, sofern er nicht schon
+        # anliegt (Nachbau von tools/framerate/interpolate.py in der
+        # Laufzeit). Gemessen ueber die ganze Eingabefolge: jedes Byte erneut
+        # dekodiert, Vertices und Zeichenaufrufe gleich, Boot-Tonstrom
+        # abtastwertgleich. Ohne die Variable inaktiv.
+        @{
+            File = 'recompcore-gx-trockenlauf.patch'
+            Target = Join-Path $RefRoot 'ModernGekko\vendor\dolphin'
+        }
     )
 
     foreach ($entry in $patches) {

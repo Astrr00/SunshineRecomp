@@ -1,0 +1,1030 @@
+--- a/Source/Core/VideoCommon/BPStructs.cpp
++++ b/Source/Core/VideoCommon/BPStructs.cpp
+@@ -3,6 +3,8 @@
+ 
+ #include "VideoCommon/BPStructs.h"
+ 
++#include "VideoCommon/GXDryRun.h"
++
+ #include <algorithm>
+ #include <cstring>
+ #include <string>
+@@ -77,6 +79,11 @@
+   ----------------------------------------------------------------------------------------------------------------
+   */
+ 
++  // Trockenlauf (WP14): im zweiten Durchlauf wirken die Register mit
++  // gastseitiger Nebenwirkung nicht -- dieselbe Liste wie unten.
++  if (GXDryRun::g_active && GXDryRun::BlocksBPRegister(bp.address))
++    return;
++
+   if (((s32*)&bpmem)[bp.address] == bp.newvalue)
+   {
+     if (!(bp.address == BPMEM_TRIGGER_EFB_COPY || bp.address == BPMEM_CLEARBBOX1 ||
+@@ -298,7 +305,13 @@
+     const u32 copy_width = srcRect.GetWidth();
+     const u32 copy_height = srcRect.GetHeight();
+ 
+-    if (destStride != 0)
++    // Trockenlauf (WP14): im zweiten Durchlauf keine Kopie -- weder in den
++    // Texturcache noch in den RAM noch als XFB (samt after_frame_event) --,
++    // aber das Loeschen unten, damit der Schatten wie der EFB beginnt.
++    if (GXDryRun::g_active)
++      GXDryRun::NoteBlockedCopy();
++
++    if (destStride != 0 && !GXDryRun::g_active)
+     {
+       // Check if we are to copy from the EFB or draw to the XFB
+       if (PE_copy.copy_to_xfb == 0)
+@@ -374,8 +387,10 @@
+       }
+     }
+ 
+-    // Clear the rectangular region after copying it.
+-    if (PE_copy.clear)
++    // Clear the rectangular region after copying it. Trockenlauf Stufe 1
++    // (nichts zeichnen) laesst auch das Loeschen aus: es traefe den EFB des
++    // laufenden Bildes, weil dort kein Schatten eingetauscht ist.
++    if (PE_copy.clear && !(GXDryRun::g_active && GXDryRun::g_no_draw))
+     {
+       const bool color_enable = bpmem.blendmode.color_update != 0;
+       const bool alpha_enable = bpmem.blendmode.alpha_update != 0;
+--- a/Source/Core/VideoCommon/CMakeLists.txt
++++ b/Source/Core/VideoCommon/CMakeLists.txt
+@@ -66,6 +66,8 @@
+   FramebufferShaderGen.cpp
+   FramebufferShaderGen.h
+   FrameDumper.cpp
++  GXDryRun.cpp
++  GXDryRun.h
+   FrameDumper.h
+   FrameDumpFFMpeg.h
+   FreeLookCamera.cpp
+--- a/Source/Core/VideoCommon/FramebufferManager.cpp
++++ b/Source/Core/VideoCommon/FramebufferManager.cpp
+@@ -42,6 +42,12 @@
+   DestroyConversionPipelines();
+   DestroyReadbackPipelines();
+   DestroyReadbackFramebuffer();
++  // Der Schatten wird bei Bedarf in der neuen Groesse angelegt.
++  m_shadow_convert_framebuffer.reset();
++  m_shadow_framebuffer.reset();
++  m_shadow_depth_texture.reset();
++  m_shadow_convert_color_texture.reset();
++  m_shadow_color_texture.reset();
+   DestroyEFBFramebuffer();
+ }
+ 
+@@ -316,6 +322,56 @@
+   g_gfx->SetFramebuffer(m_efb_framebuffer.get());
+ }
+ 
++void FramebufferManager::SwapInShadow()
++{
++  if (m_shadow_active)
++    return;
++  const u32 width = m_efb_color_texture->GetWidth();
++  const u32 height = m_efb_color_texture->GetHeight();
++  if (!m_shadow_color_texture || m_shadow_color_texture->GetWidth() != width ||
++      m_shadow_color_texture->GetHeight() != height)
++  {
++    const TextureConfig color_config = GetEFBColorTextureConfig(width, height);
++    const TextureConfig depth_config = GetEFBDepthTextureConfig(width, height);
++    m_shadow_color_texture = g_gfx->CreateTexture(color_config, "Shadow EFB color texture");
++    m_shadow_convert_color_texture =
++        g_gfx->CreateTexture(color_config, "Shadow EFB convert color texture");
++    m_shadow_depth_texture = g_gfx->CreateTexture(depth_config, "Shadow EFB depth texture");
++    if (!m_shadow_color_texture || !m_shadow_convert_color_texture || !m_shadow_depth_texture)
++      return;
++    m_shadow_framebuffer =
++        g_gfx->CreateFramebuffer(m_shadow_color_texture.get(), m_shadow_depth_texture.get());
++    m_shadow_convert_framebuffer = g_gfx->CreateFramebuffer(m_shadow_convert_color_texture.get(),
++                                                            m_shadow_depth_texture.get());
++    if (!m_shadow_framebuffer || !m_shadow_convert_framebuffer)
++      return;
++  }
++  std::swap(m_efb_color_texture, m_shadow_color_texture);
++  std::swap(m_efb_convert_color_texture, m_shadow_convert_color_texture);
++  std::swap(m_efb_depth_texture, m_shadow_depth_texture);
++  std::swap(m_efb_framebuffer, m_shadow_framebuffer);
++  std::swap(m_efb_convert_framebuffer, m_shadow_convert_framebuffer);
++  m_shadow_active = true;
++  BindEFBFramebuffer();
++  // Der Schatten beginnt leer -- die EFB-Kopie mit Loeschen, die das Bild
++  // sonst einleitet, ist im zweiten Durchlauf gesperrt.
++  ClearEFB(MathUtil::Rectangle<int>(0, 0, EFB_WIDTH, EFB_HEIGHT), true, true, true, 0,
++           0xFFFFFF, bpmem.zcontrol.pixel_format);
++}
++
++void FramebufferManager::SwapOutShadow()
++{
++  if (!m_shadow_active)
++    return;
++  std::swap(m_efb_color_texture, m_shadow_color_texture);
++  std::swap(m_efb_convert_color_texture, m_shadow_convert_color_texture);
++  std::swap(m_efb_depth_texture, m_shadow_depth_texture);
++  std::swap(m_efb_framebuffer, m_shadow_framebuffer);
++  std::swap(m_efb_convert_framebuffer, m_shadow_convert_framebuffer);
++  m_shadow_active = false;
++  BindEFBFramebuffer();
++}
++
+ AbstractTexture* FramebufferManager::ResolveEFBColorTexture(const MathUtil::Rectangle<int>& region)
+ {
+   // Return the normal EFB texture if multisampling is off.
+--- a/Source/Core/VideoCommon/FramebufferManager.h
++++ b/Source/Core/VideoCommon/FramebufferManager.h
+@@ -96,6 +96,17 @@
+   // This is virtual, because D3D has both normalized and integer framebuffers.
+   void BindEFBFramebuffer();
+ 
++  // Schatten-EFB (WP14 Schritt 2, docs/20): ein eigenes Farb-, Tiefen- und
++  // Konvertierungspaar, das fuer die Dauer des zweiten Durchlaufs an die
++  // Stelle des EFB tritt. Getauscht werden die Zeiger, damit jeder Nutzer --
++  // Zeichnen, Loeschen, Pixelformatwechsel, EFB-Kopien -- ohne Aenderung im
++  // Schatten landet. Der eigentliche EFB bleibt unberuehrt.
++  void SwapInShadow();
++  void SwapOutShadow();
++  // Der Schatten nach dem Austausch (nullptr, solange keiner angelegt ist).
++  AbstractTexture* GetShadowColorTexture() const { return m_shadow_color_texture.get(); }
++  bool IsShadowActive() const { return m_shadow_active; }
++
+   // Resolve color/depth textures to a non-msaa texture, and return it.
+   AbstractTexture* ResolveEFBColorTexture(const MathUtil::Rectangle<int>& region);
+   AbstractTexture* ResolveEFBDepthTexture(const MathUtil::Rectangle<int>& region,
+@@ -205,6 +216,13 @@
+ 
+   std::unique_ptr<AbstractFramebuffer> m_efb_framebuffer;
+   std::unique_ptr<AbstractFramebuffer> m_efb_convert_framebuffer;
++  // Schatten-EFB (siehe SwapInShadow)
++  std::unique_ptr<AbstractTexture> m_shadow_color_texture;
++  std::unique_ptr<AbstractTexture> m_shadow_convert_color_texture;
++  std::unique_ptr<AbstractTexture> m_shadow_depth_texture;
++  std::unique_ptr<AbstractFramebuffer> m_shadow_framebuffer;
++  std::unique_ptr<AbstractFramebuffer> m_shadow_convert_framebuffer;
++  bool m_shadow_active = false;
+   std::unique_ptr<AbstractFramebuffer> m_efb_color_resolve_framebuffer;
+   std::unique_ptr<AbstractFramebuffer> m_efb_depth_resolve_framebuffer;
+   std::unique_ptr<AbstractPipeline> m_efb_color_resolve_pipeline;
+--- a/Source/Core/VideoCommon/GXDryRun.cpp
++++ b/Source/Core/VideoCommon/GXDryRun.cpp
+@@ -0,0 +1,631 @@
++#include "VideoCommon/GXDryRun.h"
++
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++
++#include "VideoCommon/DataReader.h"
++#include "Common/ChunkFile.h"
++#include "Common/HookableEvent.h"
++#include "VideoCommon/BPStructs.h"
++#include "Core/System.h"
++#include "VideoCommon/AbstractTexture.h"
++#include "VideoCommon/BPMemory.h"
++#include "VideoCommon/BoundingBox.h"
++#include "VideoCommon/FramebufferManager.h"
++#include "VideoCommon/CPMemory.h"
++#include "VideoCommon/GeometryShaderManager.h"
++#include "VideoCommon/PixelShaderManager.h"
++#include "VideoCommon/VertexLoaderManager.h"
++#include "VideoCommon/VertexManagerBase.h"
++#include "VideoCommon/VertexShaderManager.h"
++#include "VideoCommon/XFMemory.h"
++#include "VideoCommon/XFStateManager.h"
++#include "VideoCommon/XFStructs.h"
++
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <tuple>
++#include "VideoCommon/OpcodeDecoding.h"
++#include "VideoCommon/VideoEvents.h"
++#include "VideoCommon/VideoEvents.h"
++
++namespace GXDryRun
++{
++bool g_active = false;
++bool g_capture = false;
++bool g_no_draw = true;
++
++namespace
++{
++std::vector<u8> s_buffer;
++Common::EventHook s_after_present;
++Common::EventHook s_after_frame;
++// Bildgrenze ist die XFB-Kopie (after_frame_event), nicht das Praesentieren:
++// Das Praesentieren faellt mitten in das Zeichnen des naechsten Bildes
++// (gemessen: der EFB zeigt beim Praesentieren Himmel und Palme des naechsten
++// Bildes, aber noch kein HUD; docs/20). Der Strom eines Bildes reicht daher
++// vom Befehl nach der XFB-Kopie bis zum Befehl vor der naechsten; die
++// XFB-Kopie selbst eroeffnet als erster Befehl das naechste Bild und leert im
++// zweiten Durchlauf nur den Schatten (BPStructs.cpp).
++std::vector<u8> s_frame;     // abgeschlossenes Bild, wartet auf den zweiten Durchlauf
++bool s_frame_ready = false;
++u64 s_frame_index = 0;       // Nummer des abgeschlossenen Bildes (Zaehlung der XFB-Kopien)
++u64 s_frames_done = 0;       // abgeschlossene Bilder (XFB-Kopien im ersten Durchlauf)
++u64 s_frames_dropped = 0;    // abgeschlossen, aber vor dem naechsten Praesentieren ueberschrieben
++// Stufe 4: das Zwischenbild praesentieren (MODERNGEKKO_GX_DRYRUN_PRESENT=1).
++bool g_present_mid = false;
++bool s_mid_ready = false;          // die anstehende Praesentation zeigt das Zwischenbild
++bool s_last_was_duplicate = false; // die vorige Praesentation wiederholte ein Bild
++MathUtil::Rectangle<int> s_frame_src_rect;  // EFB-Ausschnitt der XFB-Kopie des abgeschlossenen Bildes
++MathUtil::Rectangle<int> s_mid_src_rect;
++u64 s_presents = 0, s_presents_duplicate = 0, s_presented_mid = 0;
++u64 s_frames = 0;            // zweite Durchlaeufe
++u64 s_bytes = 0;             // mitgeschriebene Bytes insgesamt
++u64 s_blocked_bp = 0;        // gesperrte BP-Schreibvorgaenge im zweiten Durchlauf
++u64 s_decoded_bytes = 0;     // im zweiten Durchlauf dekodierte Bytes
++u64 s_vertices = 0;          // im zweiten Durchlauf geladene Vertices
++u64 s_vertices_first = 0;    // im ersten Durchlauf geladene Vertices
++u64 s_draws = 0;             // Zeichenaufrufe im zweiten Durchlauf
++u64 s_draws_first = 0;       // Zeichenaufrufe im ersten Durchlauf
++u64 s_shadow_dumps = 0;      // gespeicherte Schattenbilder
++u64 s_short_frames = 0;      // zweite Durchlaeufe, die nicht alle Bytes dekodierten
++// Stufe 3: Matrixinterpolation (docs/20, Schritt 3; Nachbau von
++// tools/framerate/interpolate.py). Je Zeichenbefehl des ersten Durchlaufs
++// werden Signatur und XF-Stand gemerkt; beim zweiten Durchlauf von Bild B
++// werden die Zeichenbefehle dem Vorbild A zugeordnet (gemeinsamer Anfang und
++// gemeinsames Ende direkt, der Rest per LCS), und vor jedem zugeordneten
++// Zeichenbefehl werden die Matrixwoerter, die sich von A nach B geaendert
++// haben, auf den Zwischenwert t gesetzt.
++bool g_interpolate = false;
++constexpr int kSnapshotWords = 256 + 96 + 256;  // 0x000-0x0FF, 0x400-0x45F, 0x500-0x5FF
++constexpr int kProjectionWords = 7;              // 0x1020-0x1026
++struct DrawRecord
++{
++  std::tuple<int, int, int, int, int, bool> signature;
++  std::array<u32, kSnapshotWords> matrices;
++  std::array<u32, kProjectionWords> projection;
++};
++std::vector<DrawRecord> s_draws_previous;   // Bild A
++std::vector<DrawRecord> s_draws_current;    // laufende Mitschrift
++std::vector<DrawRecord> s_draws_frame;      // Bild B, abgeschlossen, wartet auf den zweiten Durchlauf
++std::vector<int> s_match_of_current;        // je Zeichenbefehl von B: Index in A oder -1
++u64 s_draw_index = 0;                       // laufender Zeichenbefehl im zweiten Durchlauf
++u64 s_frames_interpolated = 0, s_draws_matched = 0, s_draws_patched = 0, s_words_interpolated = 0,
++    s_cuts = 0, s_projection_patched = 0;
++u64 s_words_already = 0;    // geaenderte Woerter, deren Zwischenwert schon anlag (kein Laden)
++std::FILE* s_draw_log = nullptr;  // je Fensterbild: Zuordnung und geladene Woerter (Diagnose)
++float s_t = 0.5f;
++u64 s_dump_from = 0, s_dump_count = 0;      // MODERNGEKKO_GX_DRYRUN_DUMP_FROM / _COUNT
++u64 s_dump_every = 0;                       // MODERNGEKKO_GX_DRYRUN_DUMP_EVERY: Fenster alle N Bilder
++
++void TakeMatrices(DrawRecord* r)
++{
++  const u32* words = reinterpret_cast<const u32*>(&xfmem);
++  std::copy(words + 0x000, words + 0x100, r->matrices.begin());
++  std::copy(words + 0x400, words + 0x460, r->matrices.begin() + 256);
++  std::copy(words + 0x500, words + 0x600, r->matrices.begin() + 352);
++  std::copy(words + 0x1020, words + 0x1027, r->projection.begin());
++}
++
++u32 SnapshotAddress(int i)
++{
++  return i < 256 ? i : i < 352 ? 0x400 + (i - 256) : 0x500 + (i - 352);
++}
++
++u32 LerpWords(u32 a, u32 b, float t)
++{
++  float fa, fb;
++  std::memcpy(&fa, &a, 4);
++  std::memcpy(&fb, &b, 4);
++  const float v = fa + (fb - fa) * t;
++  u32 out;
++  std::memcpy(&out, &v, 4);
++  return out;
++}
++
++// Zuordnung wie spike.match: gemeinsamer Anfang und gemeinsames Ende direkt,
++// der Rest per laengster gemeinsamer Teilfolge (nur bis 1.500 x 1.500 Felder).
++void MatchDraws()
++{
++  const auto& a = s_draws_previous;
++  const auto& b = s_draws_frame;
++  s_match_of_current.assign(b.size(), -1);
++  size_t head = 0;
++  while (head < a.size() && head < b.size() && a[head].signature == b[head].signature)
++    ++head;
++  size_t tail = 0;
++  while (tail < a.size() - head && tail < b.size() - head &&
++         a[a.size() - 1 - tail].signature == b[b.size() - 1 - tail].signature)
++    ++tail;
++  for (size_t i = 0; i < head; ++i)
++    s_match_of_current[i] = static_cast<int>(i);
++  for (size_t k = 0; k < tail; ++k)
++    s_match_of_current[b.size() - tail + k] = static_cast<int>(a.size() - tail + k);
++  const size_t n = a.size() - head - tail, m = b.size() - head - tail;
++  if (n == 0 || m == 0 || n > 1500 || m > 1500)
++    return;
++  std::vector<u16> table((n + 1) * (m + 1), 0);
++  auto T = [&](size_t i, size_t j) -> u16& { return table[i * (m + 1) + j]; };
++  for (size_t i = n; i-- > 0;)
++    for (size_t j = m; j-- > 0;)
++      T(i, j) = a[head + i].signature == b[head + j].signature ?
++                    static_cast<u16>(T(i + 1, j + 1) + 1) :
++                    std::max(T(i + 1, j), T(i, j + 1));
++  size_t i = 0, j = 0;
++  while (i < n && j < m)
++  {
++    if (a[head + i].signature == b[head + j].signature)
++    {
++      s_match_of_current[head + j] = static_cast<int>(head + i);
++      ++i;
++      ++j;
++    }
++    else if (T(i + 1, j) >= T(i, j + 1))
++      ++i;
++    else
++      ++j;
++  }
++}
++
++// Laedt ein XF-Wort-Paket ueber den regulaeren Weg (mit Flush und Markierung).
++void LoadWords(u32 address, const std::vector<u32>& words)
++{
++  std::vector<u8> be(words.size() * 4);
++  for (size_t k = 0; k < words.size(); ++k)
++  {
++    be[k * 4 + 0] = static_cast<u8>(words[k] >> 24);
++    be[k * 4 + 1] = static_cast<u8>(words[k] >> 16);
++    be[k * 4 + 2] = static_cast<u8>(words[k] >> 8);
++    be[k * 4 + 3] = static_cast<u8>(words[k]);
++  }
++  for (size_t off = 0; off < words.size(); off += 16)
++  {
++    const u8 n = static_cast<u8>(std::min<size_t>(16, words.size() - off));
++    LoadXFReg(static_cast<u16>(address + off), n, be.data() + off * 4);
++  }
++}
++
++u64 s_first_short = 0;       // erster solcher Durchlauf (1-basiert), 0 = keiner
++std::string s_dump_dir;      // MODERNGEKKO_GX_DRYRUN_DUMP
++
++// Registerstand am Anfang der Mitschrift. Der Strom eines Bildes setzt nicht
++// jedes Register neu; was er vom Vorbild erbt (etwa Vertexformat und
++// -beschreibung), muss der zweite Durchlauf ebenso erben -- sonst liest er
++// die Zeichenbefehle mit falscher Vertexgroesse und laeuft versetzt (gemessen:
++// 15 von 2.403 Bildern, docs/20).
++struct Snapshot
++{
++  CPState cp;
++  XFMemory xf;
++  BPMemory bp;
++  // Die abgeleiteten Zustaende der Shader-Verwalter (Konstantenpuffer und
++  // Schmutzmarken), serialisiert wie in einem Sicherungsstand. Ein blosses
++  // Neu-Markieren reichte nicht: InvalidateXFRange(0, 0x1000) rechnet den
++  // Anfang der Nachtransformations- und Lichtbereiche absolut statt relativ
++  // (XFStateManager.cpp) -- SetConstants kopierte dann hinter den
++  // Konstantenpuffer, gefunden mit valgrind (docs/20).
++  std::vector<u8> managers;
++};
++
++void DoManagers(PointerWrap& p)
++{
++  auto& system = Core::System::GetInstance();
++  system.GetPixelShaderManager().DoState(p);
++  system.GetVertexShaderManager().DoState(p);
++  system.GetGeometryShaderManager().DoState(p);
++  system.GetXFStateManager().DoState(p);
++}
++
++void CopySnapshot(Snapshot* to, const Snapshot& from)
++{
++  std::memcpy(&to->cp, &from.cp, sizeof(CPState));
++  std::memcpy(&to->xf, &from.xf, sizeof(XFMemory));
++  std::memcpy(&to->bp, &from.bp, sizeof(BPMemory));
++  to->managers = from.managers;
++}
++Snapshot s_start;   // Stand am Anfang der laufenden Mitschrift
++Snapshot s_end;     // Stand am Ende, wird nach dem zweiten Durchlauf zurueckgesetzt
++Snapshot s_frame_start;  // Stand am Anfang des abgeschlossenen Bildes
++
++void Take(Snapshot* into)
++{
++  std::memcpy(&into->cp, &g_main_cp_state, sizeof(CPState));
++  std::memcpy(&into->xf, &xfmem, sizeof(XFMemory));
++  std::memcpy(&into->bp, &bpmem, sizeof(BPMemory));
++  // Erst messen, dann schreiben -- wie State::SaveToBuffer.
++  static u8 s_measure_base;
++  u8* cursor = &s_measure_base;
++  PointerWrap measure(&cursor, 0, PointerWrap::Mode::Measure);
++  DoManagers(measure);
++  into->managers.resize(static_cast<size_t>(cursor - &s_measure_base));
++  u8* out = into->managers.data();
++  PointerWrap write(&out, into->managers.size(), PointerWrap::Mode::Write);
++  DoManagers(write);
++}
++
++void Apply(const Snapshot& from)
++{
++  std::memcpy(&g_main_cp_state, &from.cp, sizeof(CPState));
++  std::memcpy(&xfmem, &from.xf, sizeof(XFMemory));
++  std::memcpy(&bpmem, &from.bp, sizeof(BPMemory));
++  CopyPreprocessCPStateFromMain();
++  // Die Verwalter lesen ihren Stand zurueck und markieren sich schmutzig.
++  std::vector<u8> copy = from.managers;
++  u8* in = copy.data();
++  PointerWrap read(&in, copy.size(), PointerWrap::Mode::Read);
++  DoManagers(read);
++  // Wie VideoCommon_DoState nach dem Laden eines Sicherungsstands.
++  BPReload();
++  VertexLoaderManager::MarkAllDirty();
++}
++}  // namespace
++
++void CountVertices(int count)
++{
++  (g_active ? s_vertices : s_vertices_first) += static_cast<u64>(count);
++}
++
++void CountDraw()
++{
++  ++(g_active ? s_draws : s_draws_first);
++}
++
++void OnDraw(int primitive, int vat, int count, int vertex_size, int pos_kind, bool per_vertex_matrix)
++{
++  if (!g_interpolate)
++    return;
++  if (!g_active)
++  {
++    DrawRecord r;
++    r.signature = std::make_tuple(primitive, vat, count, vertex_size, pos_kind, per_vertex_matrix);
++    TakeMatrices(&r);
++    s_draws_current.push_back(std::move(r));
++    return;
++  }
++  // Zweiter Durchlauf von B: Zeichenbefehl j.
++  const size_t j = static_cast<size_t>(s_draw_index++);
++  const bool matched = j < s_match_of_current.size() && s_match_of_current[j] >= 0;
++  if (s_draw_log)
++    std::fprintf(s_draw_log, "draw %zu match %d sig %d %d %d %d %d %d\n", j,
++                 matched ? s_match_of_current[j] : -1, primitive, vat, count, vertex_size, pos_kind,
++                 per_vertex_matrix ? 1 : 0);
++  if (!matched)
++    return;
++  const DrawRecord& da = s_draws_previous[static_cast<size_t>(s_match_of_current[j])];
++  const DrawRecord& db = s_draws_frame[j];
++  ++s_draws_matched;
++  // Geaenderte Woerter als zusammenhaengende Pakete laden.
++  bool patched = false;
++  int run_start = -1;
++  std::vector<u32> run;
++  auto flush_run = [&]() {
++    if (run_start >= 0)
++    {
++      if (s_draw_log)
++      {
++        std::fprintf(s_draw_log, "  load 0x%03X n=%zu:", SnapshotAddress(run_start), run.size());
++        for (size_t k = 0; k < run.size(); ++k)
++          std::fprintf(s_draw_log, " %08X/%08X/%08X", da.matrices[run_start + k], db.matrices[run_start + k], run[k]);
++        std::fprintf(s_draw_log, "\n");
++      }
++      LoadWords(SnapshotAddress(run_start), run);
++      s_words_interpolated += run.size();
++      patched = true;
++    }
++    run_start = -1;
++    run.clear();
++  };
++  // Geladen wird nur, was sich von A nach B geaendert hat UND noch nicht
++  // anliegt: Das Spiel laedt Matrizen nicht vor jedem Zeichenbefehl neu, der
++  // vorige zugeordnete Zeichenbefehl hat den Zwischenwert also meist schon
++  // gesetzt -- und jedes Laden erzwingt einen Flush. Ohne diese Pruefung
++  // hatte der zweite Durchlauf zehnmal so viele Zeichenaufrufe wie der erste
++  // (3,78 Millionen statt 375 Tausend, docs/20).
++  const u32* live = reinterpret_cast<const u32*>(&xfmem);
++  for (int i = 0; i < kSnapshotWords; ++i)
++  {
++    const bool changed = da.matrices[i] != db.matrices[i];
++    const u32 wanted = changed ? LerpWords(da.matrices[i], db.matrices[i], s_t) : 0;
++    if (changed && live[SnapshotAddress(i)] != wanted)
++    {
++      if (run_start >= 0 && SnapshotAddress(i) != SnapshotAddress(run_start) + run.size())
++        flush_run();
++      if (run_start < 0)
++        run_start = i;
++      run.push_back(wanted);
++    }
++    else
++    {
++      if (changed)
++        ++s_words_already;
++      if (run_start >= 0)
++        flush_run();
++    }
++  }
++  flush_run();
++  if (da.projection != db.projection && da.projection[6] == db.projection[6])
++  {
++    std::vector<u32> p(kProjectionWords);
++    for (int i = 0; i < 6; ++i)
++      p[i] = LerpWords(da.projection[i], db.projection[i], s_t);
++    p[6] = db.projection[6];
++    if (!std::equal(p.begin(), p.end(), live + 0x1020))
++    {
++      LoadWords(0x1020, p);
++      ++s_projection_patched;
++      patched = true;
++    }
++    else
++      s_words_already += kProjectionWords;
++  }
++  if (patched)
++    ++s_draws_patched;
++}
++
++bool BlocksBPRegister(u8 address)
++{
++  switch (address)
++  {
++  // BPMEM_TRIGGER_EFB_COPY fehlt absichtlich: die Kopie wird in BPStructs.cpp
++  // uebersprungen, ihr Loeschen aber ausgefuehrt (NoteBlockedCopy).
++  case BPMEM_CLEARBBOX1:
++  case BPMEM_CLEARBBOX2:
++  case BPMEM_SETDRAWDONE:
++  case BPMEM_PE_TOKEN_ID:
++  case BPMEM_PE_TOKEN_INT_ID:
++  case BPMEM_LOADTLUT0:
++  case BPMEM_LOADTLUT1:
++  case BPMEM_TEXINVALIDATE:
++  case BPMEM_PRELOAD_MODE:
++  case BPMEM_CLEAR_PIXEL_PERF:
++    if (g_active)
++      ++s_blocked_bp;
++    return true;
++  default:
++    return false;
++  }
++}
++
++void NoteBlockedCopy()
++{
++  ++s_blocked_bp;
++}
++
++const AbstractTexture* PresentOverride(MathUtil::Rectangle<int>* source_rc)
++{
++  if (!s_mid_ready || !g_framebuffer_manager)
++    return nullptr;
++  const AbstractTexture* mid = g_framebuffer_manager->GetShadowColorTexture();
++  if (!mid)
++    return nullptr;
++  *source_rc = s_mid_src_rect;
++  return mid;
++}
++
++void Record(const u8* data, u32 size)
++{
++  s_buffer.insert(s_buffer.end(), data, data + size);
++  s_bytes += size;
++}
++
++// Ohne Fenster alle 60 Bilder; mit _FROM/_COUNT ein Fenster, mit _EVERY
++// dasselbe Fenster alle N Bilder ab _FROM wiederholt.
++static bool DumpNow(u64 index)
++{
++  if (s_dump_dir.empty())
++    return false;
++  if (!s_dump_count)
++    return (index % 60) == 0;
++  if (index < s_dump_from)
++    return false;
++  const u64 offset = index - s_dump_from;
++  return (s_dump_every ? offset % s_dump_every : offset) < s_dump_count;
++}
++
++// Erster Durchlauf, XFB-Kopie ausgefuehrt, Loeschen noch nicht: Bild
++// abgeschlossen. Der EFB zeigt jetzt das vollstaendige Bild -- der
++// Vergleichswert fuer das Schattenbild desselben Bildes.
++static void OnFrameEnd(Core::System&)
++{
++  if (g_active || !g_capture)
++    return;
++  if (s_frame_ready)
++    ++s_frames_dropped;
++  const u64 index = s_frames_done++;
++  if (!g_no_draw && DumpNow(index))
++    g_framebuffer_manager->GetEFBColorTexture()->Save(
++        s_dump_dir + "/efb_" + std::to_string(index) + ".png", 0);
++  s_frame.swap(s_buffer);
++  s_buffer.clear();
++  s_frame_ready = true;
++  s_frame_index = index;
++  s_frame_src_rect = MathUtil::Rectangle<int>(
++      bpmem.copyTexSrcXY.x, bpmem.copyTexSrcXY.y, bpmem.copyTexSrcXY.x + bpmem.copyTexSrcWH.x + 1,
++      bpmem.copyTexSrcXY.y + bpmem.copyTexSrcWH.y + 1);
++  CopySnapshot(&s_frame_start, s_start);
++  Take(&s_start);  // die naechste Mitschrift beginnt mit der XFB-Kopie selbst
++  if (g_interpolate)
++  {
++    s_draws_frame.swap(s_draws_current);
++    s_draws_current.clear();
++  }
++}
++
++static void SecondPass(PresentInfo& info)
++{
++  // Laeuft vor dem Praesentieren (before_present_event), damit das
++  // Zwischenbild an dessen Stelle treten kann.
++  const bool duplicate = info.reason == PresentInfo::PresentReason::VideoInterfaceDuplicate;
++  const bool previous_duplicate = s_last_was_duplicate;
++  s_last_was_duplicate = duplicate;
++  ++s_presents;
++  if (duplicate)
++    ++s_presents_duplicate;
++  if (s_presents % 300 == 0)
++    std::fprintf(stderr, "[gx-dryrun] praesentiert=%llu dup=%llu bilder=%llu mid=%llu\n",
++                 (unsigned long long)s_presents, (unsigned long long)s_presents_duplicate,
++                 (unsigned long long)s_frames_done, (unsigned long long)s_presented_mid);
++  s_mid_ready = false;
++  if (!s_frame_ready)
++    return;
++  s_frame_ready = false;
++  // Der erste Durchlauf hat beim Praesentieren meist schon Vertices des
++  // naechsten Bildes gesammelt, aber noch nicht gezeichnet. Die muessen
++  // jetzt in den eigentlichen EFB -- sonst landen sie im Schatten (Stufe 2
++  // und 3) oder werden mit dem cullall-Stapel verworfen (Stufe 1).
++  g_vertex_manager->Flush();
++  // Der zweite Durchlauf laeuft auf demselben Faden wie der erste, nach dem
++  // Praesentieren. Die Mitschrift enthaelt Display-Listen bereits aufgeloest.
++  auto& system = Core::System::GetInstance();
++  // Nichts, was der Gast liest, darf sich aendern: die Bounding Box wird im
++  // Pixelshader fortgeschrieben, die Pixelzaehler beim Zeichnen.
++  const bool bbox_was_enabled = g_bounding_box && g_bounding_box->IsEnabled();
++  if (bbox_was_enabled)
++    g_bounding_box->Disable(system.GetPixelShaderManager());
++  if (!g_no_draw)
++    g_framebuffer_manager->SwapInShadow();
++  Take(&s_end);
++  Apply(s_frame_start);
++  bool interpolate_this = false;
++  if (g_interpolate)
++  {
++    MatchDraws();
++    size_t matched = 0;
++    for (int k : s_match_of_current)
++      matched += k >= 0;
++    const size_t larger = std::max(s_draws_previous.size(), s_draws_frame.size());
++    interpolate_this = larger > 0 && matched * 10 >= larger * 6;  // spike.cut_verdict: share_floor 0.6
++    if (!interpolate_this)
++    {
++      ++s_cuts;
++      std::fill(s_match_of_current.begin(), s_match_of_current.end(), -1);
++    }
++    else
++      ++s_frames_interpolated;
++    s_draw_index = 0;
++  }
++  if (g_interpolate && DumpNow(s_frame_index))
++    s_draw_log = std::fopen((s_dump_dir + "/draws_" + std::to_string(s_frame_index) + ".txt").c_str(), "w");
++  g_active = true;
++  u32 cycles = 0;
++  DataReader reader(s_frame.data(), s_frame.data() + s_frame.size());
++  const u8* end = OpcodeDecoder::RunFifo<false>(reader, &cycles);
++  const u64 decoded = static_cast<u64>(end - s_frame.data());
++  s_decoded_bytes += decoded;
++  if (decoded != s_frame.size())
++  {
++    ++s_short_frames;
++    if (s_first_short == 0)
++      s_first_short = s_frames + 1;
++    std::fprintf(stderr, "[gx-dryrun] Durchlauf %llu (Bild %llu): %llu von %llu Bytes dekodiert\n",
++                 (unsigned long long)(s_frames + 1), (unsigned long long)s_frame_index,
++                 (unsigned long long)decoded, (unsigned long long)s_frame.size());
++  }
++  g_vertex_manager->Flush();
++  g_active = false;
++  if (s_draw_log)
++  {
++    std::fclose(s_draw_log);
++    s_draw_log = nullptr;
++  }
++  if (!g_no_draw)
++  {
++    // Der Schatten ist gerade der aktive EFB; sein Farbbild abspeichern. Das
++    // Vergleichsbild efb_<n>.png entstand an der Bildgrenze (OnFrameEnd).
++    if (DumpNow(s_frame_index) &&
++        g_framebuffer_manager->GetEFBColorTexture()->Save(
++            s_dump_dir + "/schatten_" + std::to_string(s_frame_index) + ".png", 0))
++      ++s_shadow_dumps;
++    g_framebuffer_manager->SwapOutShadow();
++    // Stufe 4: nur ein interpoliertes Bild, nur bei 30 Bildern je Sekunde
++    // (vorige Praesentation eine Wiederholung, diese ein neues Bild).
++    if (g_present_mid && interpolate_this && !duplicate && previous_duplicate)
++    {
++      s_mid_ready = true;
++      s_mid_src_rect = s_frame_src_rect;
++      ++s_presented_mid;
++    }
++  }
++  Apply(s_end);
++  if (bbox_was_enabled)
++    g_bounding_box->Enable(system.GetPixelShaderManager());
++  ++s_frames;
++  s_frame.clear();
++  if (g_interpolate)
++  {
++    s_draws_previous.swap(s_draws_frame);
++    s_draws_frame.clear();
++  }
++}
++
++void Initialize()
++{
++  const char* stufe = std::getenv("MODERNGEKKO_GX_DRYRUN");
++  g_capture = stufe != nullptr;
++  g_no_draw = !(stufe && (stufe[0] == '2' || stufe[0] == '3'));
++  g_interpolate = stufe && stufe[0] == '3';
++  const char* present = std::getenv("MODERNGEKKO_GX_DRYRUN_PRESENT");
++  g_present_mid = g_interpolate && present && present[0] == '1';
++  s_mid_ready = s_last_was_duplicate = false;
++  s_presents = s_presents_duplicate = s_presented_mid = 0;
++  if (const char* f = std::getenv("MODERNGEKKO_GX_DRYRUN_DUMP_FROM"))
++    s_dump_from = std::strtoull(f, nullptr, 10);
++  if (const char* c = std::getenv("MODERNGEKKO_GX_DRYRUN_DUMP_COUNT"))
++    s_dump_count = std::strtoull(c, nullptr, 10);
++  if (const char* e = std::getenv("MODERNGEKKO_GX_DRYRUN_DUMP_EVERY"))
++    s_dump_every = std::strtoull(e, nullptr, 10);
++  const char* dump = std::getenv("MODERNGEKKO_GX_DRYRUN_DUMP");
++  s_dump_dir = dump ? dump : "";
++  g_active = false;
++  s_buffer.clear();
++  s_frames = s_bytes = s_blocked_bp = s_decoded_bytes = s_vertices = s_shadow_dumps = 0;
++  s_vertices_first = s_draws = s_draws_first = s_short_frames = s_first_short = 0;
++  if (!g_capture)
++    return;
++  s_buffer.reserve(4u << 20);
++  s_frame.reserve(4u << 20);
++  s_frame.clear();
++  s_frame_ready = false;
++  s_frame_index = s_frames_done = s_frames_dropped = 0;
++  Take(&s_start);
++  s_after_frame =
++      Core::System::GetInstance().GetVideoEvents().after_frame_event.Register(OnFrameEnd);
++  s_after_present = Core::System::GetInstance().GetVideoEvents().before_present_event.Register(
++      SecondPass);
++}
++
++void Shutdown()
++{
++  s_after_present.reset();
++  s_after_frame.reset();
++  if (g_capture)
++  {
++    std::fprintf(stderr,
++                 "[gx-dryrun] stufe=%d frames=%llu bytes=%llu decoded=%llu blocked_bp=%llu "
++                 "vertices=%llu/%llu draws=%llu/%llu schattenbilder=%llu kurz=%llu/erster=%llu "
++                 "bilder=%llu/verworfen=%llu praesentiert=%llu/dup=%llu/mid=%llu "
++                 "interp: frames=%llu cuts=%llu matched=%llu patched=%llu words=%llu schon=%llu proj=%llu\n",
++                 g_interpolate ? 3 : g_no_draw ? 1 : 2, (unsigned long long)s_frames, (unsigned long long)s_bytes,
++                 (unsigned long long)s_decoded_bytes, (unsigned long long)s_blocked_bp,
++                 (unsigned long long)s_vertices, (unsigned long long)s_vertices_first,
++                 (unsigned long long)s_draws, (unsigned long long)s_draws_first,
++                 (unsigned long long)s_shadow_dumps, (unsigned long long)s_short_frames,
++                 (unsigned long long)s_first_short, (unsigned long long)s_frames_done,
++                 (unsigned long long)s_frames_dropped, (unsigned long long)s_presents,
++                 (unsigned long long)s_presents_duplicate, (unsigned long long)s_presented_mid,
++                 (unsigned long long)s_frames_interpolated,
++                 (unsigned long long)s_cuts, (unsigned long long)s_draws_matched,
++                 (unsigned long long)s_draws_patched, (unsigned long long)s_words_interpolated,
++                 (unsigned long long)s_words_already, (unsigned long long)s_projection_patched);
++  }
++  g_capture = false;
++  g_active = false;
++  s_buffer.clear();
++  s_buffer.shrink_to_fit();
++  s_frame.clear();
++  s_frame.shrink_to_fit();
++}
++}  // namespace GXDryRun
+--- a/Source/Core/VideoCommon/GXDryRun.h
++++ b/Source/Core/VideoCommon/GXDryRun.h
+@@ -0,0 +1,60 @@
++// Trockenlauf des GX-Befehlsstroms (WP14, Schritt 1; docs/20-VARIABLE-BILDRATE.md).
++//
++// Mit MODERNGEKKO_GX_DRYRUN=1 wird der Befehlsstrom jedes Bildes mitgeschrieben
++// und nach dem Praesentieren ein zweites Mal dekodiert -- ohne zu zeichnen und
++// ohne einen Zustand zu beruehren, den das Spiel liest. Die Frage, die dieser
++// Schritt beantwortet: Laesst sich der Strom ein zweites Mal ausfuehren, ohne
++// Tonstrom und Bildzaehler zu veraendern?
++
++#pragma once
++
++#include <vector>
++
++#include "Common/CommonTypes.h"
++#include "Common/MathUtil.h"
++
++class AbstractTexture;
++
++namespace GXDryRun
++{
++// Waehrend des zweiten Durchlaufs wahr: BPWritten sperrt die zehn Register mit
++// gastseitiger Wirkung und fuehrt von der EFB-Kopie nur das Loeschen aus; in
++// Stufe 1 zeichnet der Vertexlader nichts.
++extern bool g_active;
++// Mitschrift eingeschaltet (Umgebungsvariable MODERNGEKKO_GX_DRYRUN=1 oder 2).
++extern bool g_capture;
++// Stufe 1: nichts zeichnen (cullall). Stufe 2: in den Schatten-EFB zeichnen.
++extern bool g_no_draw;
++
++// Vom Vertexlader im zweiten Durchlauf gerufen.
++void CountVertices(int count);
++// Vom Vertexlader je Zeichenbefehl gerufen, in beiden Durchlaeufen. Im ersten
++// wird die Signatur samt XF-Stand gemerkt, im zweiten (Stufe 3) vor dem
++// Zeichnen der interpolierte XF-Stand geladen.
++void OnDraw(int primitive, int vat, int count, int vertex_size, int pos_kind, bool per_vertex_matrix);
++// Vom Vertexmanager je Zeichenaufruf gerufen (beide Durchlaeufe).
++void CountDraw();
++
++void Initialize();
++void Shutdown();
++
++// Vom Dekodierer je GP-Befehl gerufen (nicht fuer GX_CMD_CALL_DL, dessen
++// Inhalt kommt einzeln).
++void Record(const u8* data, u32 size);
++
++// Sperrt ein BP-Register im zweiten Durchlauf? Genau die Liste aus
++// BPWritten (BPStructs.cpp), die Dolphin selbst als Register mit Nebenwirkung
++// fuehrt.
++bool BlocksBPRegister(u8 address);
++// Von BPWritten gerufen, wenn im zweiten Durchlauf eine EFB-Kopie (Textur,
++// RAM oder XFB) uebersprungen wurde.
++void NoteBlockedCopy();
++
++// Stufe 4 (MODERNGEKKO_GX_DRYRUN_PRESENT=1): Das Zwischenbild wird an Stelle
++// des XFB praesentiert, wenn das Spiel gerade mit 30 Bildern je Sekunde
++// laeuft (die vorige Praesentation war eine Wiederholung) und die anstehende
++// ein neues Bild bringt; die Wiederholung danach zeigt das echte Bild. Die
++// Ausgaberate bleibt. Liefert das Zwischenbild und setzt source_rc auf den
++// EFB-Ausschnitt der XFB-Kopie, sonst nullptr.
++const AbstractTexture* PresentOverride(MathUtil::Rectangle<int>* source_rc);
++}  // namespace GXDryRun
+--- a/Source/Core/VideoCommon/OpcodeDecoding.cpp
++++ b/Source/Core/VideoCommon/OpcodeDecoding.cpp
+@@ -14,6 +14,8 @@
+ 
+ #include "VideoCommon/OpcodeDecoding.h"
+ 
++#include "VideoCommon/GXDryRun.h"
++
+ #include "Common/Assert.h"
+ #include "Common/Logging/Log.h"
+ #include "Core/FifoPlayer/FifoRecorder.h"
+@@ -235,6 +237,12 @@
+       {
+         Core::System::GetInstance().GetFifoRecorder().WriteGPCommand(data, size);
+       }
++      // Trockenlauf (WP14): den ersten Durchlauf mitschreiben, den zweiten nicht.
++      if (GXDryRun::g_capture && !GXDryRun::g_active &&
++          static_cast<Opcode>(data[0]) != Opcode::GX_CMD_CALL_DL)
++      {
++        GXDryRun::Record(data, size);
++      }
+     }
+   }
+ 
+--- a/Source/Core/VideoCommon/Present.cpp
++++ b/Source/Core/VideoCommon/Present.cpp
+@@ -16,6 +16,7 @@
+ #include "Present.h"
+ #include "VideoCommon/AbstractGfx.h"
+ #include "VideoCommon/FrameDumper.h"
++#include "VideoCommon/GXDryRun.h"
+ #include "VideoCommon/FramebufferManager.h"
+ #include "VideoCommon/OnScreenUI.h"
+ #include "VideoCommon/PostProcessing.h"
+@@ -315,8 +316,12 @@
+ 
+     // TODO: any scaling done by this won't be gamma corrected,
+     // we should either apply post processing as well, or port its gamma correction code
+-    g_frame_dumper->DumpCurrentFrame(m_xfb_entry->texture.get(), m_xfb_rect, target_rect, ticks,
+-                                     m_frame_count);
++    // Trockenlauf Stufe 4 (WP14): der Mitschnitt zeigt, was praesentiert wird.
++    const AbstractTexture* dump_texture = m_xfb_entry->texture.get();
++    MathUtil::Rectangle<int> dump_rect = m_xfb_rect;
++    if (const AbstractTexture* mid = GXDryRun::PresentOverride(&dump_rect))
++      dump_texture = mid;
++    g_frame_dumper->DumpCurrentFrame(dump_texture, dump_rect, target_rect, ticks, m_frame_count);
+   }
+ }
+ 
+@@ -938,9 +943,13 @@
+     // Adjust the source rectangle instead of using an oversized viewport to render the XFB.
+     MathUtil::Rectangle<int> render_target_rc = GetTargetRectangle();
+     MathUtil::Rectangle<int> render_source_rc = AdjustForCustomCrop(m_xfb_rect);
++    // Trockenlauf Stufe 4 (WP14): das Zwischenbild an Stelle des XFB.
++    const AbstractTexture* source_texture = m_xfb_entry->texture.get();
++    if (const AbstractTexture* mid = GXDryRun::PresentOverride(&render_source_rc))
++      source_texture = mid;
+     AdjustRectanglesToFitBounds(&render_target_rc, &render_source_rc, m_backbuffer_width,
+                                 m_backbuffer_height);
+-    RenderXFBToScreen(render_target_rc, m_xfb_entry->texture.get(), render_source_rc);
++    RenderXFBToScreen(render_target_rc, source_texture, render_source_rc);
+   }
+ 
+   if (m_onscreen_ui)
+--- a/Source/Core/VideoCommon/VertexLoaderManager.cpp
++++ b/Source/Core/VideoCommon/VertexLoaderManager.cpp
+@@ -3,6 +3,8 @@
+ 
+ #include "VideoCommon/VertexLoaderManager.h"
+ 
++#include "VideoCommon/GXDryRun.h"
++
+ #include <algorithm>
+ #include <iterator>
+ #include <memory>
+@@ -404,6 +406,13 @@
+ 
+   VertexLoaderBase* loader = RefreshLoader<IsPreprocess>(vtx_attr_group);
+ 
++  if constexpr (!IsPreprocess)
++  {
++    if (GXDryRun::g_capture)
++      GXDryRun::OnDraw(static_cast<int>(primitive), vtx_attr_group, count, loader->m_vertex_size,
++                       static_cast<int>(g_main_cp_state.vtx_desc.low.Position.Value()),
++                       g_main_cp_state.vtx_desc.low.PosMatIdx.Value() != 0);
++  }
+   int size = count * loader->m_vertex_size;
+ 
+   if constexpr (!IsPreprocess)
+@@ -440,7 +449,8 @@
+     // if cull mode is CULL_ALL, tell VertexManager to skip triangles and quads.
+     // They still need to go through vertex loading, because we need to calculate a zfreeze
+     // reference slope.
+-    const bool cullall = (bpmem.genMode.cull_mode == CullMode::All &&
++    const bool cullall = (GXDryRun::g_active && GXDryRun::g_no_draw) ||
++                         (bpmem.genMode.cull_mode == CullMode::All &&
+                           primitive < OpcodeDecoder::Primitive::GX_DRAW_LINES);
+ 
+     const int stride = loader->m_native_vtx_decl.stride;
+@@ -453,6 +463,8 @@
+                                                                   cullall || can_cpu_cull);
+ 
+       const int num_loaded = loader->RunVertices(src, dst.GetPointer(), run);
++      if (GXDryRun::g_capture)
++        GXDryRun::CountVertices(num_loaded);
+       src += loader->m_vertex_size * max_vertices;
+ 
+       if (can_cpu_cull && !cullall)
+--- a/Source/Core/VideoCommon/VertexManagerBase.cpp
++++ b/Source/Core/VideoCommon/VertexManagerBase.cpp
+@@ -22,6 +22,7 @@
+ #include "VideoCommon/AbstractGfx.h"
+ #include "VideoCommon/BPMemory.h"
+ #include "VideoCommon/BoundingBox.h"
++#include "VideoCommon/GXDryRun.h"
+ #include "VideoCommon/DataReader.h"
+ #include "VideoCommon/FramebufferManager.h"
+ #include "VideoCommon/GeometryShaderManager.h"
+@@ -1087,15 +1088,17 @@
+     base_vertex <<= 2;
+   }
+ 
+-  if (PerfQueryBase::ShouldEmulate())
++  if (PerfQueryBase::ShouldEmulate() && !GXDryRun::g_active)
+     g_perf_query->EnableQuery(bpmem.zcontrol.early_ztest ? PQG_ZCOMP_ZCOMPLOC : PQG_ZCOMP);
+ 
++  if (GXDryRun::g_capture)
++    GXDryRun::CountDraw();
+   DrawCurrentBatch(base_index, m_index_generator.GetIndexLen(), base_vertex);
+ 
+   // Track the total emulated state draws
+   INCSTAT(g_stats.this_frame.num_draw_calls);
+ 
+-  if (PerfQueryBase::ShouldEmulate())
++  if (PerfQueryBase::ShouldEmulate() && !GXDryRun::g_active)
+     g_perf_query->DisableQuery(bpmem.zcontrol.early_ztest ? PQG_ZCOMP_ZCOMPLOC : PQG_ZCOMP);
+ }
+ 
+--- a/Source/Core/VideoCommon/VideoBackendBase.cpp
++++ b/Source/Core/VideoCommon/VideoBackendBase.cpp
+@@ -3,6 +3,8 @@
+ 
+ #include "VideoCommon/VideoBackendBase.h"
+ 
++#include "VideoCommon/GXDryRun.h"
++
+ #include <algorithm>
+ #include <cstring>
+ #include <memory>
+@@ -323,6 +325,7 @@
+   g_efb_interface = std::move(efb_interface);
+ 
+   g_presenter = std::make_unique<VideoCommon::Presenter>();
++  GXDryRun::Initialize();
+   g_frame_dumper = std::make_unique<FrameDumper>();
+   g_framebuffer_manager = std::make_unique<FramebufferManager>();
+   g_shader_cache = std::make_unique<VideoCommon::ShaderCache>();
+@@ -372,6 +375,7 @@
+ void VideoBackendBase::ShutdownShared()
+ {
+   auto& system = Core::System::GetInstance();
++  GXDryRun::Shutdown();
+   system.GetCustomResourceManager().Shutdown();
+ 
+   g_frame_dumper.reset();
